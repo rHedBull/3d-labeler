@@ -84,7 +84,7 @@ export function ModeToolbar() {
       {/* Walk mode instructions */}
       {navigationMode === 'walk' && (
         <div style={styles.walkInfo}>
-          Click to enable | WASD: move | QE: up/down | ESC: release
+          WASD: move | QE: up/down | Right-drag: look
         </div>
       )}
 

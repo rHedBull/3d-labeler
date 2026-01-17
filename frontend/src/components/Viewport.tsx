@@ -1,10 +1,9 @@
 import { useRef, useMemo, useEffect, useState, useCallback } from 'react'
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
-import { OrbitControls, PointerLockControls } from '@react-three/drei'
+import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { usePointCloudStore } from '../store/pointCloudStore'
 import { useSelectionStore } from '../store/selectionStore'
-import type { PointerLockControls as PointerLockControlsImpl } from 'three-stdlib'
 
 // Generate a distinct color for a supervoxel ID using golden ratio for good distribution
 function getSupervoxelColor(id: number): [number, number, number] {
@@ -553,19 +552,32 @@ function isPointInPolygon(x: number, y: number, polygon: { x: number; y: number 
 }
 
 // Walk controls for FPS-style navigation
+// Works alongside selection modes - right-click+drag to look, WASD to move
 function WalkControls() {
   const { camera, gl } = useThree()
   const { navigationMode } = useSelectionStore()
-  const controlsRef = useRef<PointerLockControlsImpl>(null)
   const keysPressed = useRef<Set<string>>(new Set())
+  const isDragging = useRef(false)
+  const lastMouse = useRef({ x: 0, y: 0 })
+  const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'))
   const moveSpeed = 5 // units per second
   const verticalSpeed = 3 // units per second
+  const lookSpeed = 0.002
+
+  // Initialize euler from camera on mode switch
+  useEffect(() => {
+    if (navigationMode === 'walk') {
+      euler.current.setFromQuaternion(camera.quaternion, 'YXZ')
+    }
+  }, [navigationMode, camera])
 
   // Track key presses
   useEffect(() => {
     if (navigationMode !== 'walk') return
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture if typing in input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       keysPressed.current.add(e.key.toLowerCase())
     }
 
@@ -583,22 +595,63 @@ function WalkControls() {
     }
   }, [navigationMode])
 
-  // Handle click to lock pointer
+  // Right-click+drag for looking around
   useEffect(() => {
     if (navigationMode !== 'walk') return
 
-    const handleClick = () => {
-      controlsRef.current?.lock()
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button === 2) { // Right click
+        isDragging.current = true
+        lastMouse.current = { x: e.clientX, y: e.clientY }
+        e.preventDefault()
+      }
     }
 
-    gl.domElement.addEventListener('click', handleClick)
-    return () => gl.domElement.removeEventListener('click', handleClick)
-  }, [navigationMode, gl])
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+
+      const deltaX = e.clientX - lastMouse.current.x
+      const deltaY = e.clientY - lastMouse.current.y
+      lastMouse.current = { x: e.clientX, y: e.clientY }
+
+      // Update euler angles
+      euler.current.y -= deltaX * lookSpeed
+      euler.current.x -= deltaY * lookSpeed
+
+      // Clamp vertical look to avoid flipping
+      euler.current.x = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, euler.current.x))
+
+      // Apply to camera
+      camera.quaternion.setFromEuler(euler.current)
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        isDragging.current = false
+      }
+    }
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault() // Prevent context menu on right-click
+    }
+
+    const canvas = gl.domElement
+    canvas.addEventListener('mousedown', handleMouseDown)
+    canvas.addEventListener('mousemove', handleMouseMove)
+    canvas.addEventListener('mouseup', handleMouseUp)
+    canvas.addEventListener('contextmenu', handleContextMenu)
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown)
+      canvas.removeEventListener('mousemove', handleMouseMove)
+      canvas.removeEventListener('mouseup', handleMouseUp)
+      canvas.removeEventListener('contextmenu', handleContextMenu)
+    }
+  }, [navigationMode, gl, camera])
 
   // Movement in useFrame
   useFrame((_, delta) => {
     if (navigationMode !== 'walk') return
-    if (!controlsRef.current?.isLocked) return
 
     const keys = keysPressed.current
 
@@ -639,9 +692,7 @@ function WalkControls() {
     }
   })
 
-  if (navigationMode !== 'walk') return null
-
-  return <PointerLockControls ref={controlsRef} />
+  return null
 }
 
 // Handler for click-based selection (geometric, supervoxel)
