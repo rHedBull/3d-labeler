@@ -7,6 +7,7 @@ import base64
 import numpy as np
 
 from point_cloud import load_glb, load_ply, save_ply, PointCloud
+from supervoxels import compute_supervoxels
 
 app = FastAPI(title="Point Cloud Labeling API")
 
@@ -20,6 +21,7 @@ app.add_middleware(
 
 # Store current point cloud in memory
 current_pc: PointCloud | None = None
+current_supervoxels: tuple[np.ndarray, np.ndarray] | None = None
 DATA_DIR = Path(__file__).parent.parent / "data" / "real"
 
 
@@ -45,6 +47,16 @@ class SaveResponse(BaseModel):
     success: bool
     num_points: int
     path: str
+
+
+class SupervoxelRequest(BaseModel):
+    resolution: float = 0.1
+
+
+class SupervoxelResponse(BaseModel):
+    num_supervoxels: int
+    supervoxel_ids: str  # base64 encoded Int32Array
+    centroids: str  # base64 encoded Float32Array
 
 
 class SceneInfo(BaseModel):
@@ -162,3 +174,23 @@ async def save_file(req: SaveRequest):
         raise
     except Exception as e:
         raise HTTPException(500, f"Failed to save file: {str(e)}")
+
+
+@app.post("/compute-supervoxels", response_model=SupervoxelResponse)
+async def compute_supervoxels_endpoint(req: SupervoxelRequest):
+    global current_pc, current_supervoxels
+
+    if current_pc is None:
+        raise HTTPException(400, "No point cloud loaded")
+
+    try:
+        sv_ids, centroids = compute_supervoxels(current_pc.points, req.resolution)
+        current_supervoxels = (sv_ids, centroids)
+
+        return SupervoxelResponse(
+            num_supervoxels=len(centroids),
+            supervoxel_ids=base64.b64encode(sv_ids.tobytes()).decode(),
+            centroids=base64.b64encode(centroids.tobytes()).decode(),
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Failed to compute supervoxels: {str(e)}")
