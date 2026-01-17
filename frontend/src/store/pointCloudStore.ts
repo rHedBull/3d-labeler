@@ -162,6 +162,37 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
     set({ colors: newColors })
   },
 
+  computeSupervoxels: async (resolution: number = 0.1) => {
+    set({ loading: true, error: null })
+    try {
+      const data = await computeSupervoxelsAPI(resolution)
+      const supervoxelIds = base64ToInt32Array(data.supervoxel_ids)
+      set({ supervoxelIds, loading: false })
+    } catch (e) {
+      set({ loading: false, error: String(e) })
+    }
+  },
+
+  selectSupervoxel: (pointIndex: number, shiftKey: boolean, ctrlKey: boolean) => {
+    const { supervoxelIds, selectedIndices, numPoints } = get()
+    if (!supervoxelIds) return
+
+    const targetSvId = supervoxelIds[pointIndex]
+    const newSelection = new Set<number>(shiftKey ? selectedIndices : [])
+
+    for (let i = 0; i < numPoints; i++) {
+      if (supervoxelIds[i] === targetSvId) {
+        if (ctrlKey) {
+          newSelection.delete(i)
+        } else {
+          newSelection.add(i)
+        }
+      }
+    }
+
+    get().setSelection(newSelection)
+  },
+
   selectGeometricCluster: async (seedIndex: number, shiftKey: boolean, ctrlKey: boolean) => {
     const { selectedIndices } = get()
     set({ loading: true, error: null })
