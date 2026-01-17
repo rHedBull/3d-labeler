@@ -1,4 +1,5 @@
 import { useSelectionStore, type SelectionMode } from '../store/selectionStore'
+import { usePointCloudStore } from '../store/pointCloudStore'
 
 const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] = [
   { id: 'box', key: 'B', label: 'Box Select', icon: '▢' },
@@ -9,40 +10,84 @@ const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] =
 ]
 
 export function ModeToolbar() {
-  const { mode, setMode } = useSelectionStore()
+  const { mode, setMode, supervoxelResolution, setSupervoxelResolution } = useSelectionStore()
+  const { computeSupervoxels, supervoxelIds, loading } = usePointCloudStore()
+
+  const handleResolutionChange = async (newResolution: number) => {
+    setSupervoxelResolution(newResolution)
+    // Recompute supervoxels with new resolution
+    await computeSupervoxels(newResolution)
+  }
 
   return (
-    <div style={styles.toolbar}>
-      {MODES.map((m) => (
-        <button
-          key={m.id}
-          onClick={() => setMode(m.id)}
-          style={{
-            ...styles.button,
-            background: mode === m.id ? '#6a6a8a' : '#4a4a6a',
-          }}
-          title={`${m.label} (${m.key})`}
-        >
-          <span style={styles.icon}>{m.icon}</span>
-          <span style={styles.key}>{m.key}</span>
-        </button>
-      ))}
+    <div style={styles.container}>
+      <div style={styles.toolbar}>
+        {MODES.map((m) => (
+          <button
+            key={m.id}
+            onClick={() => setMode(m.id)}
+            style={{
+              ...styles.button,
+              background: mode === m.id ? '#6a6a8a' : '#4a4a6a',
+            }}
+            title={`${m.label} (${m.key})`}
+          >
+            <span style={styles.icon}>{m.icon}</span>
+            <span style={styles.key}>{m.key}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Supervoxel resolution slider - shown when in supervoxel mode */}
+      {mode === 'supervoxel' && (
+        <div style={styles.sliderContainer}>
+          <label style={styles.sliderLabel}>
+            Voxel Size: {supervoxelResolution.toFixed(2)}m
+          </label>
+          <input
+            type="range"
+            min="0.05"
+            max="0.5"
+            step="0.01"
+            value={supervoxelResolution}
+            onChange={(e) => handleResolutionChange(parseFloat(e.target.value))}
+            style={styles.slider}
+            disabled={loading}
+          />
+          <div style={styles.sliderHints}>
+            <span>Fine</span>
+            <span>Coarse</span>
+          </div>
+          {loading && <span style={styles.computing}>Computing...</span>}
+          {supervoxelIds && !loading && (
+            <span style={styles.voxelCount}>
+              {new Set(supervoxelIds).size} supervoxels
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  toolbar: {
+  container: {
     position: 'absolute',
     top: 12,
     left: '50%',
     transform: 'translateX(-50%)',
     display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 100,
+  },
+  toolbar: {
+    display: 'flex',
     gap: 4,
     background: 'rgba(45, 45, 68, 0.9)',
     padding: 4,
     borderRadius: 6,
-    zIndex: 100,
   },
   button: {
     width: 40,
@@ -63,5 +108,39 @@ const styles: Record<string, React.CSSProperties> = {
   key: {
     fontSize: 10,
     opacity: 0.7,
+  },
+  sliderContainer: {
+    background: 'rgba(45, 45, 68, 0.9)',
+    padding: '8px 12px',
+    borderRadius: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 4,
+    minWidth: 180,
+  },
+  sliderLabel: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 500,
+  },
+  slider: {
+    width: '100%',
+    cursor: 'pointer',
+  },
+  sliderHints: {
+    width: '100%',
+    display: 'flex',
+    justifyContent: 'space-between',
+    color: '#888',
+    fontSize: 10,
+  },
+  computing: {
+    color: '#88f',
+    fontSize: 11,
+  },
+  voxelCount: {
+    color: '#8f8',
+    fontSize: 11,
   },
 }

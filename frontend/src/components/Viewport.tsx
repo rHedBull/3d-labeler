@@ -1,13 +1,34 @@
-import { useRef, useMemo, useEffect, useState } from 'react'
+import { useRef, useMemo, useEffect, useState, useCallback } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { usePointCloudStore } from '../store/pointCloudStore'
 import { useSelectionStore } from '../store/selectionStore'
 
+// Generate a distinct color for a supervoxel ID using golden ratio for good distribution
+function getSupervoxelColor(id: number): [number, number, number] {
+  const goldenRatio = 0.618033988749895
+  const hue = (id * goldenRatio) % 1
+  // Convert HSL to RGB (saturation=0.7, lightness=0.5)
+  const s = 0.7
+  const l = 0.5
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs((hue * 6) % 2 - 1))
+  const m = l - c / 2
+  let r = 0, g = 0, b = 0
+  if (hue < 1/6) { r = c; g = x; b = 0 }
+  else if (hue < 2/6) { r = x; g = c; b = 0 }
+  else if (hue < 3/6) { r = 0; g = c; b = x }
+  else if (hue < 4/6) { r = 0; g = x; b = c }
+  else if (hue < 5/6) { r = x; g = 0; b = c }
+  else { r = c; g = 0; b = x }
+  return [r + m, g + m, b + m]
+}
+
 function PointCloudMesh() {
   const meshRef = useRef<THREE.Points>(null)
-  const { points, colors, numPoints, selectedIndices } = usePointCloudStore()
+  const { points, colors, numPoints, selectedIndices, supervoxelIds } = usePointCloudStore()
+  const { mode } = useSelectionStore()
 
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry()
@@ -26,7 +47,7 @@ function PointCloudMesh() {
     return geo
   }, [points, colors, numPoints])
 
-  // Update colors when selection changes
+  // Update colors when selection or mode changes
   useEffect(() => {
     if (!meshRef.current || !colors) return
 
@@ -34,6 +55,7 @@ function PointCloudMesh() {
     if (!colorAttr) return
 
     const normalizedColors = colorAttr.array as Float32Array
+    const showSupervoxels = mode === 'supervoxel' && supervoxelIds
 
     for (let i = 0; i < numPoints; i++) {
       if (selectedIndices.has(i)) {
@@ -41,6 +63,12 @@ function PointCloudMesh() {
         normalizedColors[i * 3] = 1
         normalizedColors[i * 3 + 1] = 1
         normalizedColors[i * 3 + 2] = 1
+      } else if (showSupervoxels) {
+        // Show supervoxel colors when in supervoxel mode
+        const svColor = getSupervoxelColor(supervoxelIds[i])
+        normalizedColors[i * 3] = svColor[0]
+        normalizedColors[i * 3 + 1] = svColor[1]
+        normalizedColors[i * 3 + 2] = svColor[2]
       } else {
         normalizedColors[i * 3] = colors[i * 3] / 255
         normalizedColors[i * 3 + 1] = colors[i * 3 + 1] / 255
@@ -49,7 +77,7 @@ function PointCloudMesh() {
     }
 
     colorAttr.needsUpdate = true
-  }, [selectedIndices, colors, numPoints])
+  }, [selectedIndices, colors, numPoints, mode, supervoxelIds])
 
   if (!points) return null
 
@@ -161,46 +189,401 @@ function BoxSelectionHandler({
   return null
 }
 
+// Find the point closest to a ray (for click-based selection)
+function findClosestPointToRay(
+  ray: THREE.Ray,
+  points: Float32Array,
+  numPoints: number,
+  threshold: number = 0.5
+): { index: number; position: THREE.Vector3 } | null {
+  let closestDist = Infinity
+  let closestIdx = -1
+  const point = new THREE.Vector3()
+
+  for (let i = 0; i < numPoints; i++) {
+    point.set(points[i * 3], points[i * 3 + 1], points[i * 3 + 2])
+    const dist = ray.distanceToPoint(point)
+
+    if (dist < closestDist && dist < threshold) {
+      closestDist = dist
+      closestIdx = i
+    }
+  }
+
+  if (closestIdx >= 0) {
+    return {
+      index: closestIdx,
+      position: new THREE.Vector3(
+        points[closestIdx * 3],
+        points[closestIdx * 3 + 1],
+        points[closestIdx * 3 + 2]
+      ),
+    }
+  }
+
+  return null
+}
+
+// Handler for sphere selection
+function SphereSelectionHandler({
+  sphereState,
+  onSphereUpdate,
+  onSphereComplete,
+}: {
+  sphereState: { center: THREE.Vector3 | null; radius: number; isDragging: boolean }
+  onSphereUpdate: (center: THREE.Vector3 | null, radius: number) => void
+  onSphereComplete: (indices: number[], shiftKey: boolean, ctrlKey: boolean) => void
+}) {
+  const { camera, raycaster, gl } = useThree()
+  const { points, numPoints } = usePointCloudStore()
+  const { mode } = useSelectionStore()
+
+  const handleMouseDown = useCallback((e: MouseEvent) => {
+    if (mode !== 'sphere' || e.button !== 0 || !points) return
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    )
+
+    raycaster.setFromCamera(mouse, camera)
+    const hit = findClosestPointToRay(raycaster.ray, points, numPoints)
+
+    if (hit) {
+      onSphereUpdate(hit.position, 0)
+    }
+  }, [mode, points, numPoints, camera, raycaster, gl, onSphereUpdate])
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (mode !== 'sphere' || !sphereState.center || !sphereState.isDragging) return
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    )
+
+    raycaster.setFromCamera(mouse, camera)
+
+    // Calculate radius based on distance from center to ray
+    const closestPoint = new THREE.Vector3()
+    raycaster.ray.closestPointToPoint(sphereState.center, closestPoint)
+    const radius = sphereState.center.distanceTo(closestPoint)
+
+    onSphereUpdate(sphereState.center, radius)
+  }, [mode, sphereState.center, sphereState.isDragging, camera, raycaster, gl, onSphereUpdate])
+
+  const handleMouseUp = useCallback((e: MouseEvent) => {
+    if (mode !== 'sphere' || !sphereState.center || !sphereState.isDragging || !points) {
+      return
+    }
+
+    // Select points within sphere
+    const radiusSq = sphereState.radius * sphereState.radius
+    const newIndices: number[] = []
+
+    for (let i = 0; i < numPoints; i++) {
+      const dx = points[i * 3] - sphereState.center.x
+      const dy = points[i * 3 + 1] - sphereState.center.y
+      const dz = points[i * 3 + 2] - sphereState.center.z
+      const distSq = dx * dx + dy * dy + dz * dz
+
+      if (distSq <= radiusSq) {
+        newIndices.push(i)
+      }
+    }
+
+    // Always accumulate (shiftKey=true), use ctrlKey to remove
+    onSphereComplete(newIndices, true, e.ctrlKey)
+    onSphereUpdate(null, 0)
+  }, [mode, sphereState, points, numPoints, onSphereComplete, onSphereUpdate])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    canvas.addEventListener('mousedown', handleMouseDown)
+    canvas.addEventListener('mousemove', handleMouseMove)
+    canvas.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown)
+      canvas.removeEventListener('mousemove', handleMouseMove)
+      canvas.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [gl, handleMouseDown, handleMouseMove, handleMouseUp])
+
+  // Render sphere preview
+  if (!sphereState.center || sphereState.radius === 0) return null
+
+  return (
+    <mesh position={sphereState.center}>
+      <sphereGeometry args={[sphereState.radius, 32, 32]} />
+      <meshBasicMaterial color="#ffffff" transparent opacity={0.2} wireframe />
+    </mesh>
+  )
+}
+
+// Handler for lasso selection
+function LassoSelectionHandler({
+  lassoPoints,
+  onLassoUpdate,
+  onLassoComplete,
+}: {
+  lassoPoints: { x: number; y: number }[]
+  onLassoUpdate: (points: { x: number; y: number }[]) => void
+  onLassoComplete: (indices: number[], shiftKey: boolean, ctrlKey: boolean) => void
+}) {
+  const { camera, size, gl } = useThree()
+  const { points, numPoints } = usePointCloudStore()
+  const { mode } = useSelectionStore()
+  const isDrawing = useRef(false)
+
+  const handleMouseDown = useCallback((e: MouseEvent) => {
+    if (mode !== 'lasso' || e.button !== 0) return
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    isDrawing.current = true
+    onLassoUpdate([{ x, y }])
+  }, [mode, gl, onLassoUpdate])
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (mode !== 'lasso' || !isDrawing.current) return
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    onLassoUpdate([...lassoPoints, { x, y }])
+  }, [mode, lassoPoints, gl, onLassoUpdate])
+
+  const handleMouseUp = useCallback((e: MouseEvent) => {
+    if (mode !== 'lasso' || !isDrawing.current || lassoPoints.length < 3 || !points) {
+      isDrawing.current = false
+      onLassoUpdate([])
+      return
+    }
+
+    isDrawing.current = false
+
+    // Convert lasso points to NDC
+    const lassoNDC = lassoPoints.map(p => ({
+      x: (p.x / size.width) * 2 - 1,
+      y: -(p.y / size.height) * 2 + 1,
+    }))
+
+    // Project points and check if inside lasso polygon
+    const projScreenMatrix = new THREE.Matrix4()
+    projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+
+    const newIndices: number[] = []
+    const point = new THREE.Vector3()
+
+    for (let i = 0; i < numPoints; i++) {
+      point.set(points[i * 3], points[i * 3 + 1], points[i * 3 + 2])
+      point.applyMatrix4(projScreenMatrix)
+
+      // Check if point is in front of camera and inside polygon
+      if (point.z < 1 && isPointInPolygon(point.x, point.y, lassoNDC)) {
+        newIndices.push(i)
+      }
+    }
+
+    // Always accumulate (shiftKey=true), use ctrlKey to remove
+    onLassoComplete(newIndices, true, e.ctrlKey)
+    onLassoUpdate([])
+  }, [mode, lassoPoints, points, numPoints, camera, size, onLassoComplete, onLassoUpdate])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    canvas.addEventListener('mousedown', handleMouseDown)
+    canvas.addEventListener('mousemove', handleMouseMove)
+    canvas.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown)
+      canvas.removeEventListener('mousemove', handleMouseMove)
+      canvas.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [gl, handleMouseDown, handleMouseMove, handleMouseUp])
+
+  return null
+}
+
+// Point-in-polygon test using ray casting algorithm
+function isPointInPolygon(x: number, y: number, polygon: { x: number; y: number }[]): boolean {
+  let inside = false
+  const n = polygon.length
+
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y
+    const xj = polygon[j].x, yj = polygon[j].y
+
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside
+    }
+  }
+
+  return inside
+}
+
+// Handler for click-based selection (geometric, supervoxel)
+// These modes accumulate selections by default (always add, unless Ctrl to remove)
+function ClickSelectionHandler() {
+  const { camera, raycaster, gl, size } = useThree()
+  const { points, numPoints, selectSupervoxel, selectGeometricCluster, supervoxelIds, computeSupervoxels } = usePointCloudStore()
+  const { mode, supervoxelResolution } = useSelectionStore()
+
+  // Auto-compute supervoxels when entering supervoxel mode
+  useEffect(() => {
+    if (mode === 'supervoxel' && points && !supervoxelIds) {
+      computeSupervoxels(supervoxelResolution)
+    }
+  }, [mode, points, supervoxelIds, computeSupervoxels, supervoxelResolution])
+
+  const handleClick = useCallback(async (e: MouseEvent) => {
+    if (!['geometric', 'supervoxel'].includes(mode) || e.button !== 0 || !points) return
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    )
+
+    raycaster.setFromCamera(mouse, camera)
+
+    // Use larger threshold for supervoxel mode to make clicking easier
+    const threshold = mode === 'supervoxel' ? 2.0 : 0.5
+    const hit = findClosestPointToRay(raycaster.ray, points, numPoints, threshold)
+
+    // For supervoxel mode, also try finding by screen projection if ray miss
+    if (!hit && mode === 'supervoxel' && supervoxelIds) {
+      // Find closest point by 2D screen projection
+      const projScreenMatrix = new THREE.Matrix4()
+      projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+
+      let closestDist = Infinity
+      let closestIdx = -1
+      const point = new THREE.Vector3()
+      const mouseNDC = { x: mouse.x, y: mouse.y }
+
+      for (let i = 0; i < numPoints; i++) {
+        point.set(points[i * 3], points[i * 3 + 1], points[i * 3 + 2])
+        point.applyMatrix4(projScreenMatrix)
+
+        if (point.z < 1) { // In front of camera
+          const dx = point.x - mouseNDC.x
+          const dy = point.y - mouseNDC.y
+          const dist = dx * dx + dy * dy
+
+          if (dist < closestDist) {
+            closestDist = dist
+            closestIdx = i
+          }
+        }
+      }
+
+      // Accept if within reasonable screen distance (0.1 in NDC = ~5% of screen)
+      if (closestIdx >= 0 && closestDist < 0.01) {
+        const addToSelection = true
+        const removeFromSelection = e.ctrlKey
+        selectSupervoxel(closestIdx, addToSelection, removeFromSelection)
+        return
+      }
+    }
+
+    if (!hit) return
+
+    // Always accumulate selections (act as if Shift is held), unless Ctrl to remove
+    const addToSelection = true  // Always add to existing selection
+    const removeFromSelection = e.ctrlKey
+
+    if (mode === 'geometric') {
+      await selectGeometricCluster(hit.index, addToSelection, removeFromSelection)
+    } else if (mode === 'supervoxel') {
+      // Compute supervoxels if not already done
+      if (!supervoxelIds) {
+        await computeSupervoxels(supervoxelResolution)
+      }
+      selectSupervoxel(hit.index, addToSelection, removeFromSelection)
+    }
+  }, [mode, points, numPoints, camera, raycaster, gl, size, selectGeometricCluster, selectSupervoxel, supervoxelIds, computeSupervoxels, supervoxelResolution])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    canvas.addEventListener('click', handleClick)
+
+    return () => {
+      canvas.removeEventListener('click', handleClick)
+    }
+  }, [gl, handleClick])
+
+  return null
+}
+
 export function Viewport() {
   const { mode } = useSelectionStore()
   const { selectedIndices, setSelection } = usePointCloudStore()
   const canvasRef = useRef<HTMLDivElement>(null)
 
+  // Box selection state
   const [box, setBox] = useState<{
     start: { x: number; y: number } | null
     end: { x: number; y: number } | null
   }>({ start: null, end: null })
   const [isDragging, setIsDragging] = useState(false)
 
+  // Sphere selection state
+  const [sphereState, setSphereState] = useState<{
+    center: THREE.Vector3 | null
+    radius: number
+    isDragging: boolean
+  }>({ center: null, radius: 0, isDragging: false })
+
+  // Lasso selection state
+  const [lassoPoints, setLassoPoints] = useState<{ x: number; y: number }[]>([])
+
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (mode !== 'box' || e.button !== 0) return
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (!rect) return
-    setIsDragging(true)
-    setBox({
-      start: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-      end: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-    })
+    if (mode === 'box' && e.button === 0) {
+      const rect = canvasRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setIsDragging(true)
+      setBox({
+        start: { x: e.clientX - rect.left, y: e.clientY - rect.top },
+        end: { x: e.clientX - rect.left, y: e.clientY - rect.top },
+      })
+    } else if (mode === 'sphere' && e.button === 0) {
+      // Sphere dragging is started when center is set
+      setSphereState(prev => ({ ...prev, isDragging: true }))
+    }
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !box.start) return
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (!rect) return
-    setBox(prev => ({
-      ...prev,
-      end: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-    }))
+    if (mode === 'box' && isDragging && box.start) {
+      const rect = canvasRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setBox(prev => ({
+        ...prev,
+        end: { x: e.clientX - rect.left, y: e.clientY - rect.top },
+      }))
+    }
   }
 
   const handleMouseUp = () => {
-    // Selection completion is handled in BoxSelectionHandler
-    setIsDragging(false)
-    setBox({ start: null, end: null })
+    if (mode === 'box') {
+      setIsDragging(false)
+      setBox({ start: null, end: null })
+    } else if (mode === 'sphere') {
+      // Sphere completion is handled in SphereSelectionHandler
+    }
   }
 
-  const handleSelectionComplete = (indices: number[], shiftKey: boolean, ctrlKey: boolean) => {
-    const newSelection = new Set<number>(shiftKey ? selectedIndices : [])
+  // All selection modes accumulate by default (always add to existing selection)
+  // Use Ctrl+select to remove from selection
+  const handleSelectionComplete = (indices: number[], _shiftKey: boolean, ctrlKey: boolean) => {
+    const newSelection = new Set<number>(selectedIndices) // Always keep existing selection
     for (const i of indices) {
       if (ctrlKey) {
         newSelection.delete(i)
@@ -209,6 +592,30 @@ export function Viewport() {
       }
     }
     setSelection(newSelection)
+  }
+
+  const handleSphereUpdate = (center: THREE.Vector3 | null, radius: number) => {
+    setSphereState(prev => ({
+      ...prev,
+      center,
+      radius,
+      isDragging: center !== null,
+    }))
+  }
+
+  // Determine if OrbitControls should be enabled
+  const orbitEnabled = !(
+    (mode === 'box' && isDragging) ||
+    (mode === 'sphere' && sphereState.isDragging) ||
+    (mode === 'lasso' && lassoPoints.length > 0)
+  )
+
+  // Determine mouse button behavior
+  const getLeftMouseAction = () => {
+    if (['box', 'sphere', 'lasso'].includes(mode)) {
+      return undefined // Reserved for selection
+    }
+    return THREE.MOUSE.ROTATE
   }
 
   return (
@@ -228,9 +635,9 @@ export function Viewport() {
         <OrbitControls
           enableDamping
           dampingFactor={0.05}
-          enabled={mode !== 'box' || !isDragging}
+          enabled={orbitEnabled}
           mouseButtons={{
-            LEFT: mode === 'box' ? undefined : THREE.MOUSE.ROTATE,
+            LEFT: getLeftMouseAction(),
             MIDDLE: THREE.MOUSE.PAN,
             RIGHT: THREE.MOUSE.ROTATE,
           }}
@@ -241,6 +648,17 @@ export function Viewport() {
           box={box}
           onComplete={handleSelectionComplete}
         />
+        <SphereSelectionHandler
+          sphereState={sphereState}
+          onSphereUpdate={handleSphereUpdate}
+          onSphereComplete={handleSelectionComplete}
+        />
+        <LassoSelectionHandler
+          lassoPoints={lassoPoints}
+          onLassoUpdate={setLassoPoints}
+          onLassoComplete={handleSelectionComplete}
+        />
+        <ClickSelectionHandler />
       </Canvas>
 
       {/* Selection box overlay */}
@@ -257,6 +675,27 @@ export function Viewport() {
             pointerEvents: 'none',
           }}
         />
+      )}
+
+      {/* Lasso selection overlay */}
+      {lassoPoints.length > 1 && (
+        <svg
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+          }}
+        >
+          <polygon
+            points={lassoPoints.map(p => `${p.x},${p.y}`).join(' ')}
+            fill="rgba(255, 255, 255, 0.1)"
+            stroke="rgba(255, 255, 255, 0.8)"
+            strokeWidth="2"
+          />
+        </svg>
       )}
     </div>
   )
