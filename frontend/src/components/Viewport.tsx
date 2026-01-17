@@ -130,7 +130,7 @@ function SupervoxelHulls({
 
 function PointCloudMesh() {
   const meshRef = useRef<THREE.Points>(null)
-  const { points, colors, numPoints, selectedIndices, supervoxelIds, labels, hideLabeledPoints } = usePointCloudStore()
+  const { points, colors, numPoints, selectedIndices, supervoxelIds, labels, instanceIds, hideLabeledPoints } = usePointCloudStore()
   const { mode } = useSelectionStore()
 
   const geometry = useMemo(() => {
@@ -165,8 +165,8 @@ function PointCloudMesh() {
     const showSupervoxels = mode === 'supervoxel' && supervoxelIds
 
     for (let i = 0; i < numPoints; i++) {
-      // Hide labeled points by moving them far away
-      const isLabeled = labels && labels[i] > 0
+      // Hide explicitly labeled points (instanceId > 0) by moving them far away
+      const isLabeled = instanceIds && instanceIds[i] > 0
       const shouldHide = hideLabeledPoints && isLabeled
 
       if (shouldHide) {
@@ -199,7 +199,7 @@ function PointCloudMesh() {
 
     posAttr.needsUpdate = true
     colorAttr.needsUpdate = true
-  }, [selectedIndices, colors, numPoints, mode, supervoxelIds, labels, hideLabeledPoints, points])
+  }, [selectedIndices, colors, numPoints, mode, supervoxelIds, labels, instanceIds, hideLabeledPoints, points])
 
   if (!points) return null
 

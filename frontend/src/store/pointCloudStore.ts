@@ -140,8 +140,9 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
     const { labels, instanceIds, nextInstanceId } = get()
     if (!labels || !instanceIds) return
 
-    // Each selection becomes a new instance (or clears instance if classId is 0)
-    const newInstanceId = classId > 0 ? nextInstanceId : 0
+    // Each selection becomes a new instance (including background assignments)
+    // This lets us track which points have been explicitly labeled
+    const newInstanceId = nextInstanceId
 
     for (const idx of indices) {
       labels[idx] = classId
@@ -151,7 +152,7 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
     set({
       labels: new Int32Array(labels),
       instanceIds: new Int32Array(instanceIds),
-      nextInstanceId: classId > 0 ? nextInstanceId + 1 : nextInstanceId,
+      nextInstanceId: nextInstanceId + 1,
     })
     get().updateColorsFromLabels()
   },
