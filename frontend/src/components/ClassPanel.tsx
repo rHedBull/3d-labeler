@@ -38,8 +38,8 @@ export function ClassPanel() {
         const label = labels[i]
         counts[label] = (counts[label] || 0) + 1
 
-        // Track labeled instances (label > 0)
-        if (label > 0) {
+        // Track explicitly labeled instances (instanceId > 0 means it was assigned)
+        if (instanceIds[i] > 0) {
           const key = `${label}-${instanceIds[i]}`
           if (!instanceMap[key]) instanceMap[key] = []
           instanceMap[key].push(i)
