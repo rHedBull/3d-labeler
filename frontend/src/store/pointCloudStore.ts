@@ -2,9 +2,11 @@ import { create } from 'zustand'
 import {
   loadPointCloud,
   savePointCloud,
+  computeCluster,
   base64ToFloat32Array,
   base64ToUint8Array,
   base64ToInt32Array,
+  computeSupervoxels as computeSupervoxelsAPI,
 } from '../lib/api'
 
 // Class colors from labeling_classes.yaml
@@ -35,6 +37,7 @@ interface PointCloudState {
   originalColors: Uint8Array | null
   labels: Int32Array | null
   instanceIds: Int32Array | null
+  supervoxelIds: Int32Array | null
   numPoints: number
 
   // Scene info
@@ -52,6 +55,9 @@ interface PointCloudState {
   setSelection: (indices: Set<number>) => void
   clearSelection: () => void
   updateColorsFromLabels: () => void
+  computeSupervoxels: (resolution?: number) => Promise<void>
+  selectSupervoxel: (pointIndex: number, shiftKey: boolean, ctrlKey: boolean) => void
+  selectGeometricCluster: (seedIndex: number, shiftKey: boolean, ctrlKey: boolean) => Promise<void>
 }
 
 export const usePointCloudStore = create<PointCloudState>((set, get) => ({
@@ -60,6 +66,7 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   originalColors: null,
   labels: null,
   instanceIds: null,
+  supervoxelIds: null,
   numPoints: 0,
   sceneName: null,
   loading: false,
@@ -153,5 +160,28 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
     }
 
     set({ colors: newColors })
+  },
+
+  selectGeometricCluster: async (seedIndex: number, shiftKey: boolean, ctrlKey: boolean) => {
+    const { selectedIndices } = get()
+    set({ loading: true, error: null })
+    try {
+      const data = await computeCluster(seedIndex)
+      const indices = base64ToInt32Array(data.indices)
+
+      const newSelection = new Set<number>(shiftKey ? selectedIndices : [])
+      for (const idx of indices) {
+        if (ctrlKey) {
+          newSelection.delete(idx)
+        } else {
+          newSelection.add(idx)
+        }
+      }
+
+      get().setSelection(newSelection)
+      set({ loading: false })
+    } catch (e) {
+      set({ loading: false, error: String(e) })
+    }
   },
 }))

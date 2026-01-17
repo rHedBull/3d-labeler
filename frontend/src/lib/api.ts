@@ -48,6 +48,47 @@ export async function listFiles(): Promise<SceneInfo[]> {
   return res.json()
 }
 
+export interface SupervoxelResponse {
+  num_supervoxels: number
+  supervoxel_ids: string
+  centroids: string
+}
+
+export async function computeSupervoxels(resolution = 0.1): Promise<SupervoxelResponse> {
+  const res = await fetch(`${API_BASE}/compute-supervoxels`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolution }),
+  })
+  if (!res.ok) throw new Error(`Supervoxel computation failed: ${res.statusText}`)
+  return res.json()
+}
+
+export interface ClusterResponse {
+  indices: string
+  num_points: number
+}
+
+export async function computeCluster(
+  seedIndex: number,
+  normalThreshold = 15,
+  distanceThreshold = 0.05,
+  maxPoints = 50000
+): Promise<ClusterResponse> {
+  const res = await fetch(`${API_BASE}/cluster`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      seed_index: seedIndex,
+      normal_threshold: normalThreshold,
+      distance_threshold: distanceThreshold,
+      max_points: maxPoints,
+    }),
+  })
+  if (!res.ok) throw new Error(`Cluster computation failed: ${res.statusText}`)
+  return res.json()
+}
+
 // Helpers
 export function base64ToFloat32Array(b64: string): Float32Array {
   const binary = atob(b64)
