@@ -488,10 +488,11 @@ function isPointInPolygon(x: number, y: number, polygon: { x: number; y: number 
   return inside
 }
 
-// 3D Box selection with draggable corners
+// 3D Box selection with draggable corners and rotation
 interface Box3DState {
   min: THREE.Vector3
   max: THREE.Vector3
+  rotation: THREE.Euler
   isActive: boolean
   phase: 'none' | 'placing' | 'adjusting'
 }
@@ -513,48 +514,78 @@ function Box3DSelector({
   const dragStart = useRef<THREE.Vector3>(new THREE.Vector3())
   const boxStartMin = useRef<THREE.Vector3>(new THREE.Vector3())
   const boxStartMax = useRef<THREE.Vector3>(new THREE.Vector3())
+  const boxStartRotation = useRef<THREE.Euler>(new THREE.Euler())
+  const rotationStartAngle = useRef<number>(0)
   const isMouseDown = useRef(false)
   const initialClickPos = useRef<THREE.Vector3 | null>(null)
 
-  // Calculate points inside box whenever it changes
+  // Calculate points inside rotated box whenever it changes
   useEffect(() => {
     if (!boxState.isActive || !points || boxState.phase === 'none') return
 
     const indices: number[] = []
     const min = boxState.min
     const max = boxState.max
+    const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
+    const halfSize = new THREE.Vector3().subVectors(max, min).multiplyScalar(0.5)
+
+    // Create inverse rotation matrix to transform points into box local space
+    const rotationMatrix = new THREE.Matrix4().makeRotationFromEuler(boxState.rotation)
+    const inverseRotation = rotationMatrix.clone().invert()
+
+    const point = new THREE.Vector3()
+    const localPoint = new THREE.Vector3()
 
     for (let i = 0; i < numPoints; i++) {
-      const x = points[i * 3]
-      const y = points[i * 3 + 1]
-      const z = points[i * 3 + 2]
+      point.set(points[i * 3], points[i * 3 + 1], points[i * 3 + 2])
 
-      if (x >= min.x && x <= max.x &&
-          y >= min.y && y <= max.y &&
-          z >= min.z && z <= max.z) {
+      // Transform point to box local space
+      localPoint.copy(point).sub(center)
+      localPoint.applyMatrix4(inverseRotation)
+
+      // Check if in box bounds (in local space, box is axis-aligned)
+      if (Math.abs(localPoint.x) <= halfSize.x &&
+          Math.abs(localPoint.y) <= halfSize.y &&
+          Math.abs(localPoint.z) <= halfSize.z) {
         indices.push(i)
       }
     }
 
     onSelectionUpdate(indices)
-  }, [boxState.min, boxState.max, boxState.isActive, boxState.phase, points, numPoints, onSelectionUpdate])
+  }, [boxState.min, boxState.max, boxState.rotation, boxState.isActive, boxState.phase, points, numPoints, onSelectionUpdate])
 
   // Get handle positions (8 corners + center for moving)
-  const handles = useMemo(() => {
-    if (!boxState.isActive) return []
-    const { min, max } = boxState
-    const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
-    return [
-      { id: 'min-min-min', pos: new THREE.Vector3(min.x, min.y, min.z), color: '#ffff00' },
-      { id: 'max-min-min', pos: new THREE.Vector3(max.x, min.y, min.z), color: '#ffff00' },
-      { id: 'min-max-min', pos: new THREE.Vector3(min.x, max.y, min.z), color: '#ffff00' },
-      { id: 'max-max-min', pos: new THREE.Vector3(max.x, max.y, min.z), color: '#ffff00' },
-      { id: 'min-min-max', pos: new THREE.Vector3(min.x, min.y, max.z), color: '#ffff00' },
-      { id: 'max-min-max', pos: new THREE.Vector3(max.x, min.y, max.z), color: '#ffff00' },
-      { id: 'min-max-max', pos: new THREE.Vector3(min.x, max.y, max.z), color: '#ffff00' },
-      { id: 'max-max-max', pos: new THREE.Vector3(max.x, max.y, max.z), color: '#ffff00' },
-      { id: 'center', pos: center, color: '#00ff00' }, // Green center handle for moving
+  // Handles are in local box space, then transformed to world space
+  const { cornerHandles, center, size } = useMemo(() => {
+    if (!boxState.isActive) return { cornerHandles: [], center: new THREE.Vector3(), size: new THREE.Vector3() }
+    const { min, max, rotation } = boxState
+    const c = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
+    const s = new THREE.Vector3().subVectors(max, min)
+    const halfSize = s.clone().multiplyScalar(0.5)
+
+    // Local corner positions (before rotation)
+    const localCorners = [
+      { id: 'min-min-min', local: new THREE.Vector3(-halfSize.x, -halfSize.y, -halfSize.z) },
+      { id: 'max-min-min', local: new THREE.Vector3(halfSize.x, -halfSize.y, -halfSize.z) },
+      { id: 'min-max-min', local: new THREE.Vector3(-halfSize.x, halfSize.y, -halfSize.z) },
+      { id: 'max-max-min', local: new THREE.Vector3(halfSize.x, halfSize.y, -halfSize.z) },
+      { id: 'min-min-max', local: new THREE.Vector3(-halfSize.x, -halfSize.y, halfSize.z) },
+      { id: 'max-min-max', local: new THREE.Vector3(halfSize.x, -halfSize.y, halfSize.z) },
+      { id: 'min-max-max', local: new THREE.Vector3(-halfSize.x, halfSize.y, halfSize.z) },
+      { id: 'max-max-max', local: new THREE.Vector3(halfSize.x, halfSize.y, halfSize.z) },
     ]
+
+    // Transform corners to world space
+    const rotationMatrix = new THREE.Matrix4().makeRotationFromEuler(rotation)
+    const handles = localCorners.map(({ id, local }) => {
+      const world = local.clone().applyMatrix4(rotationMatrix).add(c)
+      return { id, pos: world, color: '#ffff00' }
+    })
+
+    // Add center handle
+    handles.push({ id: 'center', pos: c.clone(), color: '#00ff00' })
+
+    return { cornerHandles: handles, center: c, size: s }
   }, [boxState])
 
   // Get mouse position in 3D at a certain depth
@@ -604,6 +635,7 @@ function Box3DSelector({
       onBoxChange({
         min: startPos.clone(),
         max: startPos.clone().add(new THREE.Vector3(0.1, 0.1, 0.1)),
+        rotation: new THREE.Euler(0, 0, 0),
         isActive: true,
         phase: 'placing',
       })
@@ -645,35 +677,62 @@ function Box3DSelector({
       const intersection = getPlaneIntersection(e, dragPlane.current)
 
       if (intersection) {
-        const delta = intersection.clone().sub(dragStart.current)
+        if (dragHandle.current.startsWith('rotate-')) {
+          // Handle rotation
+          const boxCenter = new THREE.Vector3().addVectors(boxStartMin.current, boxStartMax.current).multiplyScalar(0.5)
+          const toMouse = intersection.clone().sub(boxCenter)
+          let currentAngle = 0
+          const newRotation = boxStartRotation.current.clone()
 
-        if (dragHandle.current === 'center') {
-          // Move entire box
+          if (dragHandle.current === 'rotate-y') {
+            currentAngle = Math.atan2(toMouse.x, toMouse.z)
+            newRotation.y = boxStartRotation.current.y + (currentAngle - rotationStartAngle.current)
+          } else if (dragHandle.current === 'rotate-x') {
+            currentAngle = Math.atan2(toMouse.y, toMouse.z)
+            newRotation.x = boxStartRotation.current.x + (currentAngle - rotationStartAngle.current)
+          } else if (dragHandle.current === 'rotate-z') {
+            currentAngle = Math.atan2(toMouse.y, toMouse.x)
+            newRotation.z = boxStartRotation.current.z + (currentAngle - rotationStartAngle.current)
+          }
+
           onBoxChange({
             ...boxState,
-            min: boxStartMin.current.clone().add(delta),
-            max: boxStartMax.current.clone().add(delta),
+            rotation: newRotation,
           })
         } else {
-          // Resize from corner
-          const handleParts = dragHandle.current.split('-')
-          const newMin = boxStartMin.current.clone()
-          const newMax = boxStartMax.current.clone()
+          const delta = intersection.clone().sub(dragStart.current)
 
-          if (handleParts[0] === 'min') newMin.x = Math.min(boxStartMin.current.x + delta.x, newMax.x - 0.1)
-          else newMax.x = Math.max(boxStartMax.current.x + delta.x, newMin.x + 0.1)
+          if (dragHandle.current === 'center') {
+            // Move entire box
+            onBoxChange({
+              ...boxState,
+              min: boxStartMin.current.clone().add(delta),
+              max: boxStartMax.current.clone().add(delta),
+            })
+          } else {
+            // Resize from corner - transform delta to local space for proper scaling
+            const inverseRotation = new THREE.Matrix4().makeRotationFromEuler(boxState.rotation).invert()
+            const localDelta = delta.clone().applyMatrix4(inverseRotation)
 
-          if (handleParts[1] === 'min') newMin.y = Math.min(boxStartMin.current.y + delta.y, newMax.y - 0.1)
-          else newMax.y = Math.max(boxStartMax.current.y + delta.y, newMin.y + 0.1)
+            const handleParts = dragHandle.current.split('-')
+            const newMin = boxStartMin.current.clone()
+            const newMax = boxStartMax.current.clone()
 
-          if (handleParts[2] === 'min') newMin.z = Math.min(boxStartMin.current.z + delta.z, newMax.z - 0.1)
-          else newMax.z = Math.max(boxStartMax.current.z + delta.z, newMin.z + 0.1)
+            if (handleParts[0] === 'min') newMin.x = Math.min(boxStartMin.current.x + localDelta.x, newMax.x - 0.1)
+            else newMax.x = Math.max(boxStartMax.current.x + localDelta.x, newMin.x + 0.1)
 
-          onBoxChange({
-            ...boxState,
-            min: newMin,
-            max: newMax,
-          })
+            if (handleParts[1] === 'min') newMin.y = Math.min(boxStartMin.current.y + localDelta.y, newMax.y - 0.1)
+            else newMax.y = Math.max(boxStartMax.current.y + localDelta.y, newMin.y + 0.1)
+
+            if (handleParts[2] === 'min') newMin.z = Math.min(boxStartMin.current.z + localDelta.z, newMax.z - 0.1)
+            else newMax.z = Math.max(boxStartMax.current.z + localDelta.z, newMin.z + 0.1)
+
+            onBoxChange({
+              ...boxState,
+              min: newMin,
+              max: newMax,
+            })
+          }
         }
       }
     }
@@ -703,11 +762,11 @@ function Box3DSelector({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && boxState.isActive) {
         // Apply selection (already updated via effect)
-        onBoxChange({ min: new THREE.Vector3(), max: new THREE.Vector3(), isActive: false, phase: 'none' })
+        onBoxChange({ min: new THREE.Vector3(), max: new THREE.Vector3(), rotation: new THREE.Euler(), isActive: false, phase: 'none' })
       } else if (e.key === 'Escape') {
         // Cancel
         onSelectionUpdate([])
-        onBoxChange({ min: new THREE.Vector3(), max: new THREE.Vector3(), isActive: false, phase: 'none' })
+        onBoxChange({ min: new THREE.Vector3(), max: new THREE.Vector3(), rotation: new THREE.Euler(), isActive: false, phase: 'none' })
       }
     }
 
@@ -731,7 +790,7 @@ function Box3DSelector({
     }
   }, [mode, gl, handleMouseDown, handleMouseMove, handleMouseUp])
 
-  // Handle starting to drag a corner or center
+  // Handle starting to drag a corner, center, or rotation handle
   const startDragHandle = useCallback((handleId: string, handlePos: THREE.Vector3, e: THREE.Event) => {
     if (boxState.phase !== 'adjusting') return
 
@@ -748,29 +807,92 @@ function Box3DSelector({
     dragStart.current.copy(handlePos)
     boxStartMin.current.copy(boxState.min)
     boxStartMax.current.copy(boxState.max)
+    boxStartRotation.current.copy(boxState.rotation)
+
+    // For rotation, calculate starting angle
+    if (handleId.startsWith('rotate-')) {
+      const boxCenter = new THREE.Vector3().addVectors(boxState.min, boxState.max).multiplyScalar(0.5)
+      const toHandle = handlePos.clone().sub(boxCenter)
+      if (handleId === 'rotate-y') {
+        rotationStartAngle.current = Math.atan2(toHandle.x, toHandle.z)
+      } else if (handleId === 'rotate-x') {
+        rotationStartAngle.current = Math.atan2(toHandle.y, toHandle.z)
+      } else if (handleId === 'rotate-z') {
+        rotationStartAngle.current = Math.atan2(toHandle.y, toHandle.x)
+      }
+    }
   }, [boxState, camera])
 
   if (mode !== 'box' || !boxState.isActive) return null
 
-  const center = new THREE.Vector3().addVectors(boxState.min, boxState.max).multiplyScalar(0.5)
-  const size = new THREE.Vector3().subVectors(boxState.max, boxState.min)
+  // Calculate ring radius based on box size
+  const ringRadius = Math.max(size.x, size.y, size.z) * 0.6
 
   return (
-    <group>
-      {/* Wireframe box */}
-      <mesh position={center}>
-        <boxGeometry args={[size.x, size.y, size.z]} />
-        <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.8} />
-      </mesh>
+    <>
+      {/* Box group - rotated around center */}
+      <group position={center} rotation={boxState.rotation}>
+        {/* Wireframe box */}
+        <mesh>
+          <boxGeometry args={[size.x, size.y, size.z]} />
+          <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.8} />
+        </mesh>
 
-      {/* Semi-transparent faces */}
-      <mesh position={center}>
-        <boxGeometry args={[size.x, size.y, size.z]} />
-        <meshBasicMaterial color="#00ffff" transparent opacity={0.1} side={THREE.DoubleSide} />
-      </mesh>
+        {/* Semi-transparent faces */}
+        <mesh>
+          <boxGeometry args={[size.x, size.y, size.z]} />
+          <meshBasicMaterial color="#00ffff" transparent opacity={0.1} side={THREE.DoubleSide} />
+        </mesh>
 
-      {/* Corner and center handles */}
-      {boxState.phase === 'adjusting' && handles.map((handle) => (
+        {/* Rotation rings - only in adjusting phase */}
+        {boxState.phase === 'adjusting' && (
+          <>
+            {/* Y-axis rotation ring (green) - horizontal ring */}
+            <mesh
+              rotation={[Math.PI / 2, 0, 0]}
+              onPointerDown={(e) => {
+                const worldPos = new THREE.Vector3(ringRadius, 0, 0).applyEuler(boxState.rotation).add(center)
+                startDragHandle('rotate-y', worldPos, e)
+              }}
+              onPointerOver={() => { document.body.style.cursor = 'ew-resize' }}
+              onPointerOut={() => { document.body.style.cursor = 'default' }}
+            >
+              <torusGeometry args={[ringRadius, 0.05, 8, 32]} />
+              <meshBasicMaterial color="#00ff00" transparent opacity={0.6} />
+            </mesh>
+
+            {/* X-axis rotation ring (red) - vertical ring around X */}
+            <mesh
+              rotation={[0, Math.PI / 2, 0]}
+              onPointerDown={(e) => {
+                const worldPos = new THREE.Vector3(0, ringRadius, 0).applyEuler(boxState.rotation).add(center)
+                startDragHandle('rotate-x', worldPos, e)
+              }}
+              onPointerOver={() => { document.body.style.cursor = 'ns-resize' }}
+              onPointerOut={() => { document.body.style.cursor = 'default' }}
+            >
+              <torusGeometry args={[ringRadius, 0.05, 8, 32]} />
+              <meshBasicMaterial color="#ff0000" transparent opacity={0.6} />
+            </mesh>
+
+            {/* Z-axis rotation ring (blue) */}
+            <mesh
+              onPointerDown={(e) => {
+                const worldPos = new THREE.Vector3(0, ringRadius, 0).applyEuler(boxState.rotation).add(center)
+                startDragHandle('rotate-z', worldPos, e)
+              }}
+              onPointerOver={() => { document.body.style.cursor = 'nesw-resize' }}
+              onPointerOut={() => { document.body.style.cursor = 'default' }}
+            >
+              <torusGeometry args={[ringRadius, 0.05, 8, 32]} />
+              <meshBasicMaterial color="#0088ff" transparent opacity={0.6} />
+            </mesh>
+          </>
+        )}
+      </group>
+
+      {/* Corner and center handles - in world space (outside rotated group) */}
+      {boxState.phase === 'adjusting' && cornerHandles.map((handle) => (
         <mesh
           key={handle.id}
           position={handle.pos}
@@ -782,7 +904,7 @@ function Box3DSelector({
           <meshBasicMaterial color={handle.color} />
         </mesh>
       ))}
-    </group>
+    </>
   )
 }
 
@@ -1038,6 +1160,7 @@ export function Viewport() {
   const [box3DState, setBox3DState] = useState<Box3DState>({
     min: new THREE.Vector3(),
     max: new THREE.Vector3(),
+    rotation: new THREE.Euler(),
     isActive: false,
     phase: 'none',
   })
@@ -1170,9 +1293,9 @@ export function Viewport() {
           borderRadius: 4,
           fontSize: 12,
         }}>
-          {box3DState.phase === 'none' && 'Left-click+drag to draw box | Right-drag: rotate | Middle-drag: pan'}
+          {box3DState.phase === 'none' && 'Left-click+drag to draw box | Right-drag: rotate camera | Middle-drag: pan'}
           {box3DState.phase === 'placing' && 'Drag to set box size'}
-          {box3DState.phase === 'adjusting' && 'Drag yellow corners to resize | Green center to move | Enter: apply | Esc: cancel'}
+          {box3DState.phase === 'adjusting' && 'Corners: resize | Center: move | Rings: rotate | Enter: apply | Esc: cancel'}
         </div>
       )}
 
