@@ -51,6 +51,9 @@ interface PointCloudState {
   // Selection
   selectedIndices: Set<number>
 
+  // View options
+  hideLabeledPoints: boolean
+
   // Actions
   load: (path: string) => Promise<void>
   save: () => Promise<void>
@@ -64,6 +67,7 @@ interface PointCloudState {
   selectGeometricCluster: (seedIndex: number, shiftKey: boolean, ctrlKey: boolean) => Promise<void>
   saveSession: () => void
   loadSession: () => boolean
+  setHideLabeledPoints: (hide: boolean) => void
 }
 
 export const usePointCloudStore = create<PointCloudState>((set, get) => ({
@@ -80,6 +84,7 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   loading: false,
   error: null,
   selectedIndices: new Set(),
+  hideLabeledPoints: true,
 
   load: async (path: string) => {
     set({ loading: true, error: null })
@@ -284,5 +289,9 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
       console.error('Failed to load session:', e)
     }
     return false
+  },
+
+  setHideLabeledPoints: (hide: boolean) => {
+    set({ hideLabeledPoints: hide })
   },
 }))

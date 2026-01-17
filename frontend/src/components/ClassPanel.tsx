@@ -1,7 +1,22 @@
+import { useMemo } from 'react'
 import { usePointCloudStore, CLASS_COLORS, CLASS_NAMES } from '../store/pointCloudStore'
 
+interface LabeledInstance {
+  classId: number
+  pointCount: number
+  indices: number[]
+}
+
 export function ClassPanel() {
-  const { labels, selectedIndices, setLabels, clearSelection } = usePointCloudStore()
+  const {
+    labels,
+    selectedIndices,
+    setLabels,
+    clearSelection,
+    setSelection,
+    hideLabeledPoints,
+    setHideLabeledPoints,
+  } = usePointCloudStore()
 
   const handleAssignClass = (classId: number) => {
     if (selectedIndices.size === 0) return
@@ -9,14 +24,43 @@ export function ClassPanel() {
     clearSelection()
   }
 
-  // Count labels
-  const labelCounts: Record<number, number> = {}
-  if (labels) {
-    for (let i = 0; i < labels.length; i++) {
-      const label = labels[i]
-      labelCounts[label] = (labelCounts[label] || 0) + 1
+  // Count labels and collect instances
+  const { labelCounts, instances } = useMemo(() => {
+    const counts: Record<number, number> = {}
+    const instanceMap: Record<number, number[]> = {}
+
+    if (labels) {
+      for (let i = 0; i < labels.length; i++) {
+        const label = labels[i]
+        counts[label] = (counts[label] || 0) + 1
+
+        // Track labeled instances (label > 0)
+        if (label > 0) {
+          if (!instanceMap[label]) instanceMap[label] = []
+          instanceMap[label].push(i)
+        }
+      }
     }
+
+    // Convert to instance list
+    const instList: LabeledInstance[] = Object.entries(instanceMap).map(([classId, indices]) => ({
+      classId: Number(classId),
+      pointCount: indices.length,
+      indices,
+    }))
+
+    // Sort by class ID
+    instList.sort((a, b) => a.classId - b.classId)
+
+    return { labelCounts: counts, instances: instList }
+  }, [labels])
+
+  const handleInstanceClick = (instance: LabeledInstance) => {
+    // Select all points in this instance
+    setSelection(new Set(instance.indices))
   }
+
+  const totalLabeled = instances.reduce((sum, i) => sum + i.pointCount, 0)
 
   return (
     <div style={styles.panel}>
@@ -60,6 +104,53 @@ export function ClassPanel() {
       <div style={styles.hint}>
         Press 0-6 to assign class to selection
       </div>
+
+      {/* Labeled Instances Section */}
+      {instances.length > 0 && (
+        <>
+          <div style={styles.divider} />
+          <h3 style={styles.title}>
+            Labeled ({totalLabeled.toLocaleString()})
+          </h3>
+
+          <label style={styles.toggleLabel}>
+            <input
+              type="checkbox"
+              checked={hideLabeledPoints}
+              onChange={(e) => setHideLabeledPoints(e.target.checked)}
+            />
+            Hide labeled points
+          </label>
+
+          <div style={styles.instanceList}>
+            {instances.map((instance) => {
+              const [r, g, b] = CLASS_COLORS[instance.classId]
+              const name = CLASS_NAMES[instance.classId]
+
+              return (
+                <div
+                  key={instance.classId}
+                  onClick={() => handleInstanceClick(instance)}
+                  style={styles.instanceItem}
+                >
+                  <div
+                    style={{
+                      ...styles.colorBox,
+                      background: `rgb(${r}, ${g}, ${b})`,
+                    }}
+                  />
+                  <div style={styles.info}>
+                    <div style={styles.instanceName}>{name}</div>
+                    <div style={styles.count}>
+                      {instance.pointCount.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -133,5 +224,37 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: '#666',
     textAlign: 'center',
+  },
+  divider: {
+    height: 1,
+    background: '#444',
+    margin: '8px 0',
+  },
+  toggleLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 12,
+    cursor: 'pointer',
+    marginBottom: 8,
+  },
+  instanceList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    maxHeight: 200,
+    overflow: 'auto',
+  },
+  instanceItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '4px 6px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    background: '#3a3a5a',
+  },
+  instanceName: {
+    fontSize: 11,
   },
 }

@@ -122,14 +122,16 @@ function SupervoxelHulls({
 
 function PointCloudMesh() {
   const meshRef = useRef<THREE.Points>(null)
-  const { points, colors, numPoints, selectedIndices, supervoxelIds } = usePointCloudStore()
+  const { points, colors, numPoints, selectedIndices, supervoxelIds, labels, hideLabeledPoints } = usePointCloudStore()
   const { mode } = useSelectionStore()
 
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry()
 
     if (points && colors) {
-      geo.setAttribute('position', new THREE.BufferAttribute(points, 3))
+      // Create a copy of positions that we can modify for hiding
+      const positions = new Float32Array(points)
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
 
       // Normalize colors to 0-1 range
       const normalizedColors = new Float32Array(numPoints * 3)
@@ -142,17 +144,33 @@ function PointCloudMesh() {
     return geo
   }, [points, colors, numPoints])
 
-  // Update colors when selection or mode changes
+  // Update positions, colors when selection, mode, or hide setting changes
   useEffect(() => {
-    if (!meshRef.current || !colors) return
+    if (!meshRef.current || !colors || !points) return
 
+    const posAttr = meshRef.current.geometry.getAttribute('position') as THREE.BufferAttribute
     const colorAttr = meshRef.current.geometry.getAttribute('color') as THREE.BufferAttribute
-    if (!colorAttr) return
+    if (!colorAttr || !posAttr) return
 
+    const positions = posAttr.array as Float32Array
     const normalizedColors = colorAttr.array as Float32Array
     const showSupervoxels = mode === 'supervoxel' && supervoxelIds
 
     for (let i = 0; i < numPoints; i++) {
+      // Hide labeled points by moving them far away
+      const isLabeled = labels && labels[i] > 0
+      const shouldHide = hideLabeledPoints && isLabeled
+
+      if (shouldHide) {
+        positions[i * 3] = 1e10
+        positions[i * 3 + 1] = 1e10
+        positions[i * 3 + 2] = 1e10
+      } else {
+        positions[i * 3] = points[i * 3]
+        positions[i * 3 + 1] = points[i * 3 + 1]
+        positions[i * 3 + 2] = points[i * 3 + 2]
+      }
+
       if (selectedIndices.has(i)) {
         // Highlight selected points in white
         normalizedColors[i * 3] = 1
@@ -171,8 +189,9 @@ function PointCloudMesh() {
       }
     }
 
+    posAttr.needsUpdate = true
     colorAttr.needsUpdate = true
-  }, [selectedIndices, colors, numPoints, mode, supervoxelIds])
+  }, [selectedIndices, colors, numPoints, mode, supervoxelIds, labels, hideLabeledPoints, points])
 
   if (!points) return null
 
