@@ -54,6 +54,9 @@ interface PointCloudState {
   // View options
   hideLabeledPoints: boolean
 
+  // Instance tracking
+  nextInstanceId: number
+
   // Actions
   load: (path: string) => Promise<void>
   save: () => Promise<void>
@@ -85,6 +88,7 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   error: null,
   selectedIndices: new Set(),
   hideLabeledPoints: true,
+  nextInstanceId: 1,
 
   load: async (path: string) => {
     set({ loading: true, error: null })
@@ -133,14 +137,22 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   },
 
   setLabels: (indices: number[], classId: number) => {
-    const { labels } = get()
-    if (!labels) return
+    const { labels, instanceIds, nextInstanceId } = get()
+    if (!labels || !instanceIds) return
+
+    // Each selection becomes a new instance (or clears instance if classId is 0)
+    const newInstanceId = classId > 0 ? nextInstanceId : 0
 
     for (const idx of indices) {
       labels[idx] = classId
+      instanceIds[idx] = newInstanceId
     }
 
-    set({ labels: new Int32Array(labels) })
+    set({
+      labels: new Int32Array(labels),
+      instanceIds: new Int32Array(instanceIds),
+      nextInstanceId: classId > 0 ? nextInstanceId + 1 : nextInstanceId,
+    })
     get().updateColorsFromLabels()
   },
 
@@ -256,13 +268,14 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   },
 
   saveSession: () => {
-    const { sceneName, labels, instanceIds } = get()
+    const { sceneName, labels, instanceIds, nextInstanceId } = get()
     if (!sceneName || !labels || !instanceIds) return
 
     const session = {
       source_file: sceneName,
       labels: Array.from(labels),
       instance_ids: Array.from(instanceIds),
+      next_instance_id: nextInstanceId,
       timestamp: new Date().toISOString(),
     }
 
@@ -281,7 +294,10 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
       if (session.labels && session.labels.length === labels.length) {
         const newLabels = new Int32Array(session.labels)
         const newInstanceIds = new Int32Array(session.instance_ids || new Array(labels.length).fill(0))
-        set({ labels: newLabels, instanceIds: newInstanceIds })
+        // Restore nextInstanceId, or compute from max existing instance ID
+        const maxInstanceId = Math.max(0, ...newInstanceIds)
+        const nextId = session.next_instance_id || maxInstanceId + 1
+        set({ labels: newLabels, instanceIds: newInstanceIds, nextInstanceId: nextId })
         get().updateColorsFromLabels()
         return true
       }

@@ -3,6 +3,8 @@ import { usePointCloudStore, CLASS_COLORS, CLASS_NAMES } from '../store/pointClo
 
 interface LabeledInstance {
   classId: number
+  instanceId: number
+  instanceNumber: number  // Per-class instance number (1, 2, 3...)
   pointCount: number
   indices: number[]
 }
@@ -10,6 +12,7 @@ interface LabeledInstance {
 export function ClassPanel() {
   const {
     labels,
+    instanceIds,
     selectedIndices,
     setLabels,
     clearSelection,
@@ -27,33 +30,53 @@ export function ClassPanel() {
   // Count labels and collect instances
   const { labelCounts, instances } = useMemo(() => {
     const counts: Record<number, number> = {}
-    const instanceMap: Record<number, number[]> = {}
+    // Map of "classId-instanceId" -> point indices
+    const instanceMap: Record<string, number[]> = {}
 
-    if (labels) {
+    if (labels && instanceIds) {
       for (let i = 0; i < labels.length; i++) {
         const label = labels[i]
         counts[label] = (counts[label] || 0) + 1
 
         // Track labeled instances (label > 0)
         if (label > 0) {
-          if (!instanceMap[label]) instanceMap[label] = []
-          instanceMap[label].push(i)
+          const key = `${label}-${instanceIds[i]}`
+          if (!instanceMap[key]) instanceMap[key] = []
+          instanceMap[key].push(i)
         }
       }
     }
 
-    // Convert to instance list
-    const instList: LabeledInstance[] = Object.entries(instanceMap).map(([classId, indices]) => ({
-      classId: Number(classId),
-      pointCount: indices.length,
-      indices,
-    }))
+    // Convert to instance list and assign per-class instance numbers
+    const classInstanceCounters: Record<number, number> = {}
+    const instList: LabeledInstance[] = []
 
-    // Sort by class ID
-    instList.sort((a, b) => a.classId - b.classId)
+    // Sort by instanceId to maintain consistent ordering
+    const sortedKeys = Object.keys(instanceMap).sort((a, b) => {
+      const [, instA] = a.split('-').map(Number)
+      const [, instB] = b.split('-').map(Number)
+      return instA - instB
+    })
+
+    for (const key of sortedKeys) {
+      const [classIdStr, instanceIdStr] = key.split('-')
+      const classId = Number(classIdStr)
+      const instanceId = Number(instanceIdStr)
+
+      // Assign per-class instance number
+      classInstanceCounters[classId] = (classInstanceCounters[classId] || 0) + 1
+
+      instList.push({
+        classId,
+        instanceId,
+        instanceNumber: classInstanceCounters[classId],
+        pointCount: instanceMap[key].length,
+        indices: instanceMap[key],
+      })
+    }
 
     return { labelCounts: counts, instances: instList }
-  }, [labels])
+  }, [labels, instanceIds])
 
   const handleInstanceClick = (instance: LabeledInstance) => {
     // Select all points in this instance
@@ -126,10 +149,11 @@ export function ClassPanel() {
             {instances.map((instance) => {
               const [r, g, b] = CLASS_COLORS[instance.classId]
               const name = CLASS_NAMES[instance.classId]
+              const instanceName = `${name}_${instance.instanceNumber}`
 
               return (
                 <div
-                  key={instance.classId}
+                  key={`${instance.classId}-${instance.instanceId}`}
                   onClick={() => handleInstanceClick(instance)}
                   style={styles.instanceItem}
                 >
@@ -140,7 +164,7 @@ export function ClassPanel() {
                     }}
                   />
                   <div style={styles.info}>
-                    <div style={styles.instanceName}>{name}</div>
+                    <div style={styles.instanceName}>{instanceName}</div>
                     <div style={styles.count}>
                       {instance.pointCount.toLocaleString()}
                     </div>
