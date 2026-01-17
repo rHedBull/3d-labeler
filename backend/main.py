@@ -43,17 +43,26 @@ async def health():
 async def load_file(req: LoadRequest):
     global current_pc
 
-    file_path = DATA_DIR / req.path
+    # Validate path doesn't escape DATA_DIR
+    file_path = (DATA_DIR / req.path).resolve()
+    if not str(file_path).startswith(str(DATA_DIR.resolve())):
+        raise HTTPException(400, "Invalid path: path traversal not allowed")
+
     if not file_path.exists():
         raise HTTPException(404, f"File not found: {req.path}")
 
     suffix = file_path.suffix.lower()
-    if suffix == '.glb':
-        current_pc = load_glb(file_path, req.num_samples)
-    elif suffix == '.ply':
-        current_pc = load_ply(file_path)
-    else:
-        raise HTTPException(400, f"Unsupported file type: {suffix}")
+    try:
+        if suffix == '.glb':
+            current_pc = load_glb(file_path, req.num_samples)
+        elif suffix == '.ply':
+            current_pc = load_ply(file_path)
+        else:
+            raise HTTPException(400, f"Unsupported file type: {suffix}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load file: {str(e)}")
 
     return LoadResponse(
         num_points=len(current_pc),
