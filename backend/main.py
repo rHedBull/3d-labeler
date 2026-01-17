@@ -53,6 +53,7 @@ class SaveResponse(BaseModel):
 
 class SupervoxelRequest(BaseModel):
     resolution: float = 0.1
+    exclude_mask: str | None = None  # base64 encoded Int32Array - points with value > 0 are excluded
 
 
 class SupervoxelHull(BaseModel):
@@ -204,7 +205,17 @@ async def compute_supervoxels_endpoint(req: SupervoxelRequest):
         raise HTTPException(400, "No point cloud loaded")
 
     try:
-        sv_ids, centroids, hulls = compute_supervoxels(current_pc.points, req.resolution, compute_hulls=True)
+        # Decode exclude mask if provided (labels array - exclude points with label > 0)
+        exclude_mask = None
+        if req.exclude_mask:
+            exclude_mask = np.frombuffer(base64.b64decode(req.exclude_mask), dtype=np.int32)
+
+        sv_ids, centroids, hulls = compute_supervoxels(
+            current_pc.points,
+            req.resolution,
+            compute_hulls=True,
+            exclude_mask=exclude_mask,
+        )
         current_supervoxels = (sv_ids, centroids, hulls)
 
         # Convert hulls to response format

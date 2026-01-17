@@ -60,11 +60,15 @@ export interface SupervoxelResponse {
   hulls: SupervoxelHull[]
 }
 
-export async function computeSupervoxels(resolution = 0.1): Promise<SupervoxelResponse> {
+export async function computeSupervoxels(resolution = 0.1, excludeMask?: Int32Array): Promise<SupervoxelResponse> {
+  const body: Record<string, unknown> = { resolution }
+  if (excludeMask) {
+    body.exclude_mask = arrayToBase64(excludeMask)
+  }
   const res = await fetch(`${API_BASE}/compute-supervoxels`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolution }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`Supervoxel computation failed: ${res.statusText}`)
   return res.json()

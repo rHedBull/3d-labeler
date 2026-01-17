@@ -188,9 +188,11 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   },
 
   computeSupervoxels: async (resolution: number = 0.1) => {
+    const { labels } = get()
     set({ loading: true, error: null })
     try {
-      const data = await computeSupervoxelsAPI(resolution)
+      // Pass labels as exclude mask - points with label > 0 will be excluded
+      const data = await computeSupervoxelsAPI(resolution, labels || undefined)
       const supervoxelIds = base64ToInt32Array(data.supervoxel_ids)
       const supervoxelCentroids = base64ToFloat32Array(data.centroids)
       set({
