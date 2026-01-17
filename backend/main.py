@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
+from typing import List
 import base64
 import numpy as np
 
@@ -46,9 +47,48 @@ class SaveResponse(BaseModel):
     path: str
 
 
+class SceneInfo(BaseModel):
+    name: str
+    has_source: bool
+    has_ground_truth: bool
+    source_type: str | None
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/files", response_model=List[SceneInfo])
+async def list_files():
+    scenes = []
+
+    if not DATA_DIR.exists():
+        return scenes
+
+    for scene_dir in sorted(DATA_DIR.iterdir()):
+        if not scene_dir.is_dir():
+            continue
+
+        source_glb = scene_dir / "source.glb"
+        source_ply = scene_dir / "source.ply"
+        gt_ply = scene_dir / "ground_truth.ply"
+
+        has_source = source_glb.exists() or source_ply.exists()
+        source_type = None
+        if source_glb.exists():
+            source_type = "glb"
+        elif source_ply.exists():
+            source_type = "ply"
+
+        scenes.append(SceneInfo(
+            name=scene_dir.name,
+            has_source=has_source,
+            has_ground_truth=gt_ply.exists(),
+            source_type=source_type,
+        ))
+
+    return scenes
 
 
 @app.post("/load", response_model=LoadResponse)
