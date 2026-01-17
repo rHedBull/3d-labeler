@@ -5,7 +5,7 @@ from pathlib import Path
 import base64
 import numpy as np
 
-from point_cloud import load_glb, load_ply, PointCloud
+from point_cloud import load_glb, load_ply, save_ply, PointCloud
 
 app = FastAPI(title="Point Cloud Labeling API")
 
@@ -32,6 +32,18 @@ class LoadResponse(BaseModel):
     points: str  # base64 encoded Float32Array
     colors: str | None  # base64 encoded Uint8Array
     labels: str  # base64 encoded Int32Array
+
+
+class SaveRequest(BaseModel):
+    labels: str  # base64 encoded Int32Array
+    instance_ids: str  # base64 encoded Int32Array
+    scene_name: str
+
+
+class SaveResponse(BaseModel):
+    success: bool
+    num_points: int
+    path: str
 
 
 @app.get("/health")
@@ -70,3 +82,43 @@ async def load_file(req: LoadRequest):
         colors=base64.b64encode(current_pc.colors.tobytes()).decode() if current_pc.colors is not None else None,
         labels=base64.b64encode(current_pc.labels.tobytes()).decode(),
     )
+
+
+@app.post("/save", response_model=SaveResponse)
+async def save_file(req: SaveRequest):
+    global current_pc
+
+    if current_pc is None:
+        raise HTTPException(400, "No point cloud loaded")
+
+    # Validate scene_name doesn't escape DATA_DIR
+    output_dir = (DATA_DIR / req.scene_name).resolve()
+    if not str(output_dir).startswith(str(DATA_DIR.resolve())):
+        raise HTTPException(400, "Invalid scene_name: path traversal not allowed")
+
+    try:
+        # Decode labels
+        labels = np.frombuffer(base64.b64decode(req.labels), dtype=np.int32)
+        instance_ids = np.frombuffer(base64.b64decode(req.instance_ids), dtype=np.int32)
+
+        if len(labels) != len(current_pc):
+            raise HTTPException(400, f"Label count mismatch: {len(labels)} vs {len(current_pc)}")
+
+        current_pc.labels = labels
+        current_pc.instance_ids = instance_ids
+
+        # Save to ground_truth.ply
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "ground_truth.ply"
+
+        num_saved = save_ply(output_path, current_pc)
+
+        return SaveResponse(
+            success=True,
+            num_points=num_saved,
+            path=str(output_path.relative_to(DATA_DIR.parent.parent)),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to save file: {str(e)}")
