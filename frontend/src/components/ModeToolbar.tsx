@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useSelectionStore, type SelectionMode } from '../store/selectionStore'
+import { useSelectionStore, type SelectionMode, type NavigationMode } from '../store/selectionStore'
 import { usePointCloudStore } from '../store/pointCloudStore'
 
 const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] = [
@@ -11,7 +11,7 @@ const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] =
 ]
 
 export function ModeToolbar() {
-  const { mode, setMode, supervoxelResolution, setSupervoxelResolution } = useSelectionStore()
+  const { mode, setMode, navigationMode, setNavigationMode, supervoxelResolution, setSupervoxelResolution } = useSelectionStore()
   const { computeSupervoxels, supervoxelIds, loading } = usePointCloudStore()
 
   // Local slider value for immediate visual feedback
@@ -65,7 +65,28 @@ export function ModeToolbar() {
             <span style={styles.key}>{m.key}</span>
           </button>
         ))}
+
+        <div style={styles.separator} />
+
+        <button
+          onClick={() => setNavigationMode(navigationMode === 'orbit' ? 'walk' : 'orbit')}
+          style={{
+            ...styles.button,
+            background: navigationMode === 'walk' ? '#6a8a6a' : '#4a4a6a',
+          }}
+          title={`${navigationMode === 'walk' ? 'Walk Mode (click to orbit)' : 'Orbit Mode (click to walk)'} (F)`}
+        >
+          <span style={styles.icon}>{navigationMode === 'walk' ? '🚶' : '🔄'}</span>
+          <span style={styles.key}>F</span>
+        </button>
       </div>
+
+      {/* Walk mode instructions */}
+      {navigationMode === 'walk' && (
+        <div style={styles.walkInfo}>
+          Click to enable | WASD: move | QE: up/down | ESC: release
+        </div>
+      )}
 
       {/* Supervoxel resolution slider - shown when in supervoxel mode */}
       {mode === 'supervoxel' && (
@@ -117,6 +138,20 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(45, 45, 68, 0.9)',
     padding: 4,
     borderRadius: 6,
+    alignItems: 'center',
+  },
+  separator: {
+    width: 1,
+    height: 32,
+    background: 'rgba(255, 255, 255, 0.2)',
+    margin: '0 4px',
+  },
+  walkInfo: {
+    background: 'rgba(106, 138, 106, 0.9)',
+    padding: '6px 12px',
+    borderRadius: 4,
+    color: 'white',
+    fontSize: 11,
   },
   button: {
     width: 40,

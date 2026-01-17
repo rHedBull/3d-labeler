@@ -1,9 +1,10 @@
 import { useRef, useMemo, useEffect, useState, useCallback } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
+import { Canvas, useThree, useFrame } from '@react-three/fiber'
+import { OrbitControls, PointerLockControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { usePointCloudStore } from '../store/pointCloudStore'
 import { useSelectionStore } from '../store/selectionStore'
+import type { PointerLockControls as PointerLockControlsImpl } from 'three-stdlib'
 
 // Generate a distinct color for a supervoxel ID using golden ratio for good distribution
 function getSupervoxelColor(id: number): [number, number, number] {
@@ -551,6 +552,98 @@ function isPointInPolygon(x: number, y: number, polygon: { x: number; y: number 
   return inside
 }
 
+// Walk controls for FPS-style navigation
+function WalkControls() {
+  const { camera, gl } = useThree()
+  const { navigationMode } = useSelectionStore()
+  const controlsRef = useRef<PointerLockControlsImpl>(null)
+  const keysPressed = useRef<Set<string>>(new Set())
+  const moveSpeed = 5 // units per second
+  const verticalSpeed = 3 // units per second
+
+  // Track key presses
+  useEffect(() => {
+    if (navigationMode !== 'walk') return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      keysPressed.current.add(e.key.toLowerCase())
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      keysPressed.current.delete(e.key.toLowerCase())
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      keysPressed.current.clear()
+    }
+  }, [navigationMode])
+
+  // Handle click to lock pointer
+  useEffect(() => {
+    if (navigationMode !== 'walk') return
+
+    const handleClick = () => {
+      controlsRef.current?.lock()
+    }
+
+    gl.domElement.addEventListener('click', handleClick)
+    return () => gl.domElement.removeEventListener('click', handleClick)
+  }, [navigationMode, gl])
+
+  // Movement in useFrame
+  useFrame((_, delta) => {
+    if (navigationMode !== 'walk') return
+    if (!controlsRef.current?.isLocked) return
+
+    const keys = keysPressed.current
+
+    // Get camera's horizontal forward direction (ignore pitch for W always horizontal)
+    const forward = new THREE.Vector3()
+    camera.getWorldDirection(forward)
+    forward.y = 0 // Make horizontal
+    forward.normalize()
+
+    // Get right vector (strafe direction)
+    const right = new THREE.Vector3()
+    right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize()
+
+    // Calculate movement
+    const movement = new THREE.Vector3()
+
+    if (keys.has('w')) movement.add(forward)
+    if (keys.has('s')) movement.sub(forward)
+    if (keys.has('a')) movement.sub(right)
+    if (keys.has('d')) movement.add(right)
+
+    // Vertical movement
+    if (keys.has('q')) movement.y -= 1
+    if (keys.has('e')) movement.y += 1
+
+    // Apply movement
+    if (movement.length() > 0) {
+      // Separate horizontal and vertical for different speeds
+      const horizontal = new THREE.Vector3(movement.x, 0, movement.z)
+      if (horizontal.length() > 0) {
+        horizontal.normalize().multiplyScalar(moveSpeed * delta)
+        camera.position.add(horizontal)
+      }
+
+      if (movement.y !== 0) {
+        camera.position.y += Math.sign(movement.y) * verticalSpeed * delta
+      }
+    }
+  })
+
+  if (navigationMode !== 'walk') return null
+
+  return <PointerLockControls ref={controlsRef} />
+}
+
 // Handler for click-based selection (geometric, supervoxel)
 // These modes accumulate selections by default (always add, unless Ctrl to remove)
 function ClickSelectionHandler() {
@@ -646,7 +739,7 @@ function ClickSelectionHandler() {
 }
 
 export function Viewport() {
-  const { mode } = useSelectionStore()
+  const { mode, navigationMode } = useSelectionStore()
   const { selectedIndices, setSelection, selectSupervoxelById } = usePointCloudStore()
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -731,7 +824,7 @@ export function Viewport() {
   }
 
   // Determine if OrbitControls should be enabled
-  const orbitEnabled = !(
+  const orbitEnabled = navigationMode === 'orbit' && !(
     (mode === 'box' && isDragging) ||
     (mode === 'sphere' && sphereState.isDragging) ||
     (mode === 'lasso' && lassoPoints.length > 0)
@@ -787,6 +880,7 @@ export function Viewport() {
           onLassoComplete={handleSelectionComplete}
         />
         <ClickSelectionHandler />
+        <WalkControls />
       </Canvas>
 
       {/* Selection box overlay */}
