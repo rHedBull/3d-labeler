@@ -8,6 +8,7 @@ import numpy as np
 
 from point_cloud import load_glb, load_ply, save_ply, PointCloud
 from supervoxels import compute_supervoxels
+from clustering import region_grow
 
 app = FastAPI(title="Point Cloud Labeling API")
 
@@ -57,6 +58,18 @@ class SupervoxelResponse(BaseModel):
     num_supervoxels: int
     supervoxel_ids: str  # base64 encoded Int32Array
     centroids: str  # base64 encoded Float32Array
+
+
+class ClusterRequest(BaseModel):
+    seed_index: int
+    normal_threshold: float = 15.0
+    distance_threshold: float = 0.05
+    max_points: int = 50000
+
+
+class ClusterResponse(BaseModel):
+    indices: str  # base64 encoded Int32Array
+    num_points: int
 
 
 class SceneInfo(BaseModel):
@@ -194,3 +207,32 @@ async def compute_supervoxels_endpoint(req: SupervoxelRequest):
         )
     except Exception as e:
         raise HTTPException(500, f"Failed to compute supervoxels: {str(e)}")
+
+
+@app.post("/cluster", response_model=ClusterResponse)
+async def compute_cluster(req: ClusterRequest):
+    global current_pc
+
+    if current_pc is None:
+        raise HTTPException(400, "No point cloud loaded")
+
+    if req.seed_index < 0 or req.seed_index >= len(current_pc):
+        raise HTTPException(400, f"Invalid seed index: {req.seed_index}")
+
+    try:
+        indices = region_grow(
+            current_pc.points,
+            req.seed_index,
+            normal_threshold_deg=req.normal_threshold,
+            distance_threshold=req.distance_threshold,
+            max_points=req.max_points,
+        )
+
+        indices_array = np.array(indices, dtype=np.int32)
+
+        return ClusterResponse(
+            indices=base64.b64encode(indices_array.tobytes()).decode(),
+            num_points=len(indices),
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Failed to compute cluster: {str(e)}")
