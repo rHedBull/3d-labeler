@@ -180,8 +180,8 @@ function PointCloudMesh() {
       }
 
       if (selectedIndices.has(i)) {
-        // Highlight selected points in white
-        normalizedColors[i * 3] = 1
+        // Highlight selected points in bright cyan for high contrast
+        normalizedColors[i * 3] = 0
         normalizedColors[i * 3 + 1] = 1
         normalizedColors[i * 3 + 2] = 1
       } else if (showSupervoxels) {
@@ -244,69 +244,6 @@ function CameraController() {
     camera.position.set(centerX + size, centerY + size, centerZ + size)
     camera.lookAt(centerX, centerY, centerZ)
   }, [points, camera])
-
-  return null
-}
-
-// Component inside Canvas to handle box selection projection
-function BoxSelectionHandler({
-  isDragging,
-  box,
-  onComplete,
-}: {
-  isDragging: boolean
-  box: { start: { x: number; y: number } | null; end: { x: number; y: number } | null }
-  onComplete: (indices: number[], shiftKey: boolean, ctrlKey: boolean) => void
-}) {
-  const { camera, size } = useThree()
-  const { points, numPoints } = usePointCloudStore()
-  const prevDragging = useRef(isDragging)
-  const lastEvent = useRef<{ shiftKey: boolean; ctrlKey: boolean }>({ shiftKey: false, ctrlKey: false })
-
-  useEffect(() => {
-    // Detect end of drag
-    if (prevDragging.current && !isDragging && box.start && box.end && points) {
-      const toNDC = (x: number, y: number) => ({
-        x: (x / size.width) * 2 - 1,
-        y: -(y / size.height) * 2 + 1,
-      })
-
-      const startNDC = toNDC(box.start.x, box.start.y)
-      const endNDC = toNDC(box.end.x, box.end.y)
-
-      const minX = Math.min(startNDC.x, endNDC.x)
-      const maxX = Math.max(startNDC.x, endNDC.x)
-      const minY = Math.min(startNDC.y, endNDC.y)
-      const maxY = Math.max(startNDC.y, endNDC.y)
-
-      const projScreenMatrix = new THREE.Matrix4()
-      projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-
-      const selectedIndices: number[] = []
-      const point = new THREE.Vector3()
-
-      for (let i = 0; i < numPoints; i++) {
-        point.set(points[i * 3], points[i * 3 + 1], points[i * 3 + 2])
-        point.applyMatrix4(projScreenMatrix)
-
-        if (point.z < 1 && point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY) {
-          selectedIndices.push(i)
-        }
-      }
-
-      onComplete(selectedIndices, lastEvent.current.shiftKey, lastEvent.current.ctrlKey)
-    }
-    prevDragging.current = isDragging
-  }, [isDragging, box, points, numPoints, camera, size, onComplete])
-
-  // Store modifier keys on mouseup
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      lastEvent.current = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey }
-    }
-    window.addEventListener('mouseup', handler)
-    return () => window.removeEventListener('mouseup', handler)
-  }, [])
 
   return null
 }
@@ -549,6 +486,288 @@ function isPointInPolygon(x: number, y: number, polygon: { x: number; y: number 
   }
 
   return inside
+}
+
+// 3D Box selection with draggable corners
+interface Box3DState {
+  min: THREE.Vector3
+  max: THREE.Vector3
+  isActive: boolean
+  phase: 'none' | 'placing' | 'adjusting'
+}
+
+function Box3DSelector({
+  boxState,
+  onBoxChange,
+  onSelectionUpdate,
+}: {
+  boxState: Box3DState
+  onBoxChange: (state: Box3DState) => void
+  onSelectionUpdate: (indices: number[]) => void
+}) {
+  const { camera, raycaster, gl } = useThree()
+  const { points, numPoints } = usePointCloudStore()
+  const { mode } = useSelectionStore()
+  const dragHandle = useRef<string | null>(null)
+  const dragPlane = useRef<THREE.Plane>(new THREE.Plane())
+  const dragOffset = useRef<THREE.Vector3>(new THREE.Vector3())
+
+  // Calculate points inside box whenever it changes
+  useEffect(() => {
+    if (!boxState.isActive || !points || boxState.phase === 'none') return
+
+    const indices: number[] = []
+    const min = boxState.min
+    const max = boxState.max
+
+    for (let i = 0; i < numPoints; i++) {
+      const x = points[i * 3]
+      const y = points[i * 3 + 1]
+      const z = points[i * 3 + 2]
+
+      if (x >= min.x && x <= max.x &&
+          y >= min.y && y <= max.y &&
+          z >= min.z && z <= max.z) {
+        indices.push(i)
+      }
+    }
+
+    onSelectionUpdate(indices)
+  }, [boxState.min, boxState.max, boxState.isActive, boxState.phase, points, numPoints, onSelectionUpdate])
+
+  // Get handle positions (8 corners)
+  const handles = useMemo(() => {
+    if (!boxState.isActive) return []
+    const { min, max } = boxState
+    return [
+      { id: 'min-min-min', pos: new THREE.Vector3(min.x, min.y, min.z) },
+      { id: 'max-min-min', pos: new THREE.Vector3(max.x, min.y, min.z) },
+      { id: 'min-max-min', pos: new THREE.Vector3(min.x, max.y, min.z) },
+      { id: 'max-max-min', pos: new THREE.Vector3(max.x, max.y, min.z) },
+      { id: 'min-min-max', pos: new THREE.Vector3(min.x, min.y, max.z) },
+      { id: 'max-min-max', pos: new THREE.Vector3(max.x, min.y, max.z) },
+      { id: 'min-max-max', pos: new THREE.Vector3(min.x, max.y, max.z) },
+      { id: 'max-max-max', pos: new THREE.Vector3(max.x, max.y, max.z) },
+    ]
+  }, [boxState])
+
+  // Handle initial box placement
+  const handleCanvasClick = useCallback((e: MouseEvent) => {
+    if (mode !== 'box' || e.button !== 0) return
+    if (boxState.phase === 'adjusting') return // Don't start new box while adjusting
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    )
+
+    raycaster.setFromCamera(mouse, camera)
+
+    // Find intersection point - either with a point or at a fixed distance
+    let hitPoint: THREE.Vector3 | null = null
+
+    if (points) {
+      const hit = findClosestPointToRay(raycaster.ray, points, numPoints, 1.0)
+      if (hit) {
+        hitPoint = hit.position
+      }
+    }
+
+    if (!hitPoint) {
+      // Place at a fixed distance from camera
+      hitPoint = new THREE.Vector3()
+      raycaster.ray.at(10, hitPoint)
+    }
+
+    // Start placing mode
+    onBoxChange({
+      min: hitPoint.clone(),
+      max: hitPoint.clone(),
+      isActive: true,
+      phase: 'placing',
+    })
+  }, [mode, boxState.phase, gl, camera, raycaster, points, numPoints, onBoxChange])
+
+  // Handle mouse move for box placement and handle dragging
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (mode !== 'box') return
+
+    const rect = gl.domElement.getBoundingClientRect()
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    )
+
+    raycaster.setFromCamera(mouse, camera)
+
+    if (boxState.phase === 'placing') {
+      // Extend box on the XZ plane at the initial Y level
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -boxState.min.y)
+      const intersection = new THREE.Vector3()
+      raycaster.ray.intersectPlane(plane, intersection)
+
+      if (intersection) {
+        const newMax = new THREE.Vector3(
+          intersection.x,
+          boxState.min.y + 2, // Give it some default height
+          intersection.z
+        )
+
+        // Ensure min/max are correct
+        const actualMin = new THREE.Vector3(
+          Math.min(boxState.min.x, newMax.x),
+          boxState.min.y,
+          Math.min(boxState.min.z, newMax.z)
+        )
+        const actualMax = new THREE.Vector3(
+          Math.max(boxState.min.x, newMax.x),
+          newMax.y,
+          Math.max(boxState.min.z, newMax.z)
+        )
+
+        onBoxChange({
+          ...boxState,
+          min: actualMin,
+          max: actualMax,
+        })
+      }
+    } else if (boxState.phase === 'adjusting' && dragHandle.current) {
+      // Drag handle
+      const intersection = new THREE.Vector3()
+      raycaster.ray.intersectPlane(dragPlane.current, intersection)
+
+      if (intersection) {
+        const newPos = intersection.sub(dragOffset.current)
+        const handleParts = dragHandle.current.split('-')
+
+        const newMin = boxState.min.clone()
+        const newMax = boxState.max.clone()
+
+        // Update the appropriate coordinates based on which corner is being dragged
+        if (handleParts[0] === 'min') newMin.x = Math.min(newPos.x, newMax.x - 0.1)
+        else newMax.x = Math.max(newPos.x, newMin.x + 0.1)
+
+        if (handleParts[1] === 'min') newMin.y = Math.min(newPos.y, newMax.y - 0.1)
+        else newMax.y = Math.max(newPos.y, newMin.y + 0.1)
+
+        if (handleParts[2] === 'min') newMin.z = Math.min(newPos.z, newMax.z - 0.1)
+        else newMax.z = Math.max(newPos.z, newMin.z + 0.1)
+
+        onBoxChange({
+          ...boxState,
+          min: newMin,
+          max: newMax,
+        })
+      }
+    }
+  }, [mode, boxState, gl, camera, raycaster, onBoxChange])
+
+  // Handle mouse up to finish placing
+  const handleMouseUp = useCallback((e: MouseEvent) => {
+    if (mode !== 'box') return
+
+    if (boxState.phase === 'placing') {
+      // Switch to adjusting mode
+      onBoxChange({
+        ...boxState,
+        phase: 'adjusting',
+      })
+    }
+
+    dragHandle.current = null
+  }, [mode, boxState, onBoxChange])
+
+  // Handle keyboard for apply/cancel
+  useEffect(() => {
+    if (mode !== 'box' || !boxState.isActive) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        // Apply selection (already updated via effect)
+        onBoxChange({ min: new THREE.Vector3(), max: new THREE.Vector3(), isActive: false, phase: 'none' })
+      } else if (e.key === 'Escape') {
+        // Cancel
+        onSelectionUpdate([])
+        onBoxChange({ min: new THREE.Vector3(), max: new THREE.Vector3(), isActive: false, phase: 'none' })
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [mode, boxState.isActive, onBoxChange, onSelectionUpdate])
+
+  // Attach mouse listeners
+  useEffect(() => {
+    if (mode !== 'box') return
+
+    const canvas = gl.domElement
+    canvas.addEventListener('click', handleCanvasClick)
+    canvas.addEventListener('mousemove', handleMouseMove)
+    canvas.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      canvas.removeEventListener('click', handleCanvasClick)
+      canvas.removeEventListener('mousemove', handleMouseMove)
+      canvas.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [mode, gl, handleCanvasClick, handleMouseMove, handleMouseUp])
+
+  // Handle starting to drag a corner
+  const startDragHandle = useCallback((handleId: string, handlePos: THREE.Vector3) => {
+    if (boxState.phase !== 'adjusting') return
+
+    dragHandle.current = handleId
+
+    // Create a plane perpendicular to camera for dragging
+    const cameraDir = new THREE.Vector3()
+    camera.getWorldDirection(cameraDir)
+    dragPlane.current.setFromNormalAndCoplanarPoint(cameraDir, handlePos)
+
+    // Calculate offset from ray intersection to handle position
+    const intersection = new THREE.Vector3()
+    const mouse = new THREE.Vector2()
+    // We'll update this on the next mouse move
+    dragOffset.current.set(0, 0, 0)
+  }, [boxState.phase, camera])
+
+  if (mode !== 'box' || !boxState.isActive) return null
+
+  const center = new THREE.Vector3().addVectors(boxState.min, boxState.max).multiplyScalar(0.5)
+  const size = new THREE.Vector3().subVectors(boxState.max, boxState.min)
+
+  return (
+    <group>
+      {/* Wireframe box */}
+      <mesh position={center}>
+        <boxGeometry args={[size.x, size.y, size.z]} />
+        <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.5} />
+      </mesh>
+
+      {/* Semi-transparent faces */}
+      <mesh position={center}>
+        <boxGeometry args={[size.x, size.y, size.z]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.1} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Corner handles */}
+      {boxState.phase === 'adjusting' && handles.map((handle) => (
+        <mesh
+          key={handle.id}
+          position={handle.pos}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            startDragHandle(handle.id, handle.pos)
+          }}
+          onPointerOver={() => { document.body.style.cursor = 'grab' }}
+          onPointerOut={() => { document.body.style.cursor = 'default' }}
+        >
+          <sphereGeometry args={[0.15, 16, 16]} />
+          <meshBasicMaterial color="#ffff00" />
+        </mesh>
+      ))}
+    </group>
+  )
 }
 
 // Walk controls for FPS-style navigation
@@ -799,12 +1018,13 @@ export function Viewport() {
     selectSupervoxelById(supervoxelId, ctrlKey)
   }, [selectSupervoxelById])
 
-  // Box selection state
-  const [box, setBox] = useState<{
-    start: { x: number; y: number } | null
-    end: { x: number; y: number } | null
-  }>({ start: null, end: null })
-  const [isDragging, setIsDragging] = useState(false)
+  // 3D Box selection state
+  const [box3DState, setBox3DState] = useState<Box3DState>({
+    min: new THREE.Vector3(),
+    max: new THREE.Vector3(),
+    isActive: false,
+    phase: 'none',
+  })
 
   // Sphere selection state
   const [sphereState, setSphereState] = useState<{
@@ -817,39 +1037,25 @@ export function Viewport() {
   const [lassoPoints, setLassoPoints] = useState<{ x: number; y: number }[]>([])
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (mode === 'box' && e.button === 0) {
-      const rect = canvasRef.current?.getBoundingClientRect()
-      if (!rect) return
-      setIsDragging(true)
-      setBox({
-        start: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-        end: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-      })
-    } else if (mode === 'sphere' && e.button === 0) {
+    if (mode === 'sphere' && e.button === 0) {
       // Sphere dragging is started when center is set
       setSphereState(prev => ({ ...prev, isDragging: true }))
     }
   }
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (mode === 'box' && isDragging && box.start) {
-      const rect = canvasRef.current?.getBoundingClientRect()
-      if (!rect) return
-      setBox(prev => ({
-        ...prev,
-        end: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-      }))
-    }
+  const handleMouseMove = (_e: React.MouseEvent) => {
+    // Box mode now handled by Box3DSelector
   }
 
   const handleMouseUp = () => {
-    if (mode === 'box') {
-      setIsDragging(false)
-      setBox({ start: null, end: null })
-    } else if (mode === 'sphere') {
-      // Sphere completion is handled in SphereSelectionHandler
-    }
+    // Box mode now handled by Box3DSelector
   }
+
+  // Handle 3D box selection updates
+  const handleBox3DSelectionUpdate = useCallback((indices: number[]) => {
+    // Update selection in real-time as box changes
+    setSelection(new Set(indices))
+  }, [setSelection])
 
   // All selection modes accumulate by default (always add to existing selection)
   // Use Ctrl+select to remove from selection
@@ -876,7 +1082,7 @@ export function Viewport() {
 
   // Determine if OrbitControls should be enabled
   const orbitEnabled = navigationMode === 'orbit' && !(
-    (mode === 'box' && isDragging) ||
+    (mode === 'box' && box3DState.isActive) ||
     (mode === 'sphere' && sphereState.isDragging) ||
     (mode === 'lasso' && lassoPoints.length > 0)
   )
@@ -915,10 +1121,10 @@ export function Viewport() {
         />
         <PointCloudMesh />
         <SupervoxelHulls onHullClick={handleHullClick} />
-        <BoxSelectionHandler
-          isDragging={isDragging}
-          box={box}
-          onComplete={handleSelectionComplete}
+        <Box3DSelector
+          boxState={box3DState}
+          onBoxChange={setBox3DState}
+          onSelectionUpdate={handleBox3DSelectionUpdate}
         />
         <SphereSelectionHandler
           sphereState={sphereState}
@@ -934,20 +1140,23 @@ export function Viewport() {
         <WalkControls />
       </Canvas>
 
-      {/* Selection box overlay */}
-      {isDragging && box.start && box.end && (
-        <div
-          style={{
-            position: 'absolute',
-            left: Math.min(box.start.x, box.end.x),
-            top: Math.min(box.start.y, box.end.y),
-            width: Math.abs(box.end.x - box.start.x),
-            height: Math.abs(box.end.y - box.start.y),
-            border: '2px solid rgba(255, 255, 255, 0.8)',
-            background: 'rgba(255, 255, 255, 0.1)',
-            pointerEvents: 'none',
-          }}
-        />
+      {/* Box mode instructions */}
+      {mode === 'box' && (
+        <div style={{
+          position: 'absolute',
+          bottom: 12,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: 4,
+          fontSize: 12,
+        }}>
+          {box3DState.phase === 'none' && 'Click to place box corner'}
+          {box3DState.phase === 'placing' && 'Drag to set box size, release to adjust'}
+          {box3DState.phase === 'adjusting' && 'Drag corners to adjust | Enter to apply | Esc to cancel'}
+        </div>
       )}
 
       {/* Lasso selection overlay */}
