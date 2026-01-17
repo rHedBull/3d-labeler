@@ -77,8 +77,8 @@ export function ModeToolbar() {
           <input
             type="range"
             min="0.05"
-            max="0.5"
-            step="0.01"
+            max="2.0"
+            step="0.05"
             value={localResolution}
             onChange={(e) => handleResolutionChange(parseFloat(e.target.value))}
             style={styles.slider}

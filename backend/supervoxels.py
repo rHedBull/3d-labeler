@@ -1,6 +1,7 @@
 import numpy as np
 import open3d as o3d
 from typing import Tuple, List, Optional
+from scipy.spatial import ConvexHull, QhullError
 
 
 def compute_supervoxels(
@@ -67,51 +68,62 @@ def compute_supervoxels(
 
     centroids = np.asarray(downsampled.points).astype(np.float32)
 
-    # Compute bounding boxes for each supervoxel
+    # Compute convex hulls for each supervoxel (fallback to bbox for few points)
     hulls = None
     if compute_hulls:
         hulls = []
         for sv_id, group_indices in enumerate(point_groups):
             sv_points = points[group_indices]
+            n_points = len(group_indices)
 
-            if len(group_indices) == 1:
-                # Single point - create small box around it
-                center = sv_points[0]
-                half = resolution * 0.4
-                min_pt = center - half
-                max_pt = center + half
-            else:
-                # Compute bounding box with small padding
-                min_pt = sv_points.min(axis=0) - resolution * 0.05
-                max_pt = sv_points.max(axis=0) + resolution * 0.05
+            vertices = None
+            faces = None
 
-            # Create box vertices (8 corners)
-            vertices = [
-                [min_pt[0], min_pt[1], min_pt[2]],  # 0
-                [max_pt[0], min_pt[1], min_pt[2]],  # 1
-                [max_pt[0], max_pt[1], min_pt[2]],  # 2
-                [min_pt[0], max_pt[1], min_pt[2]],  # 3
-                [min_pt[0], min_pt[1], max_pt[2]],  # 4
-                [max_pt[0], min_pt[1], max_pt[2]],  # 5
-                [max_pt[0], max_pt[1], max_pt[2]],  # 6
-                [min_pt[0], max_pt[1], max_pt[2]],  # 7
-            ]
+            # Try convex hull if we have enough points
+            if n_points >= 4:
+                try:
+                    hull = ConvexHull(sv_points)
+                    # Get unique hull vertices
+                    hull_vertices = sv_points[hull.vertices].astype(np.float32)
+                    # Remap face indices to hull vertex indices
+                    vertex_map = {old: new for new, old in enumerate(hull.vertices)}
+                    hull_faces = [[vertex_map[v] for v in simplex] for simplex in hull.simplices]
 
-            # Create box faces (12 triangles, 2 per face)
-            faces = [
-                # Bottom face
-                [0, 2, 1], [0, 3, 2],
-                # Top face
-                [4, 5, 6], [4, 6, 7],
-                # Front face
-                [0, 1, 5], [0, 5, 4],
-                # Back face
-                [2, 3, 7], [2, 7, 6],
-                # Left face
-                [0, 4, 7], [0, 7, 3],
-                # Right face
-                [1, 2, 6], [1, 6, 5],
-            ]
+                    vertices = hull_vertices.tolist()
+                    faces = hull_faces
+                except QhullError:
+                    # Degenerate case (coplanar points, etc.) - fall back to bbox
+                    pass
+
+            # Fallback to bounding box
+            if vertices is None:
+                if n_points == 1:
+                    center = sv_points[0]
+                    half = resolution * 0.4
+                    min_pt = center - half
+                    max_pt = center + half
+                else:
+                    min_pt = sv_points.min(axis=0) - resolution * 0.05
+                    max_pt = sv_points.max(axis=0) + resolution * 0.05
+
+                vertices = [
+                    [min_pt[0], min_pt[1], min_pt[2]],
+                    [max_pt[0], min_pt[1], min_pt[2]],
+                    [max_pt[0], max_pt[1], min_pt[2]],
+                    [min_pt[0], max_pt[1], min_pt[2]],
+                    [min_pt[0], min_pt[1], max_pt[2]],
+                    [max_pt[0], min_pt[1], max_pt[2]],
+                    [max_pt[0], max_pt[1], max_pt[2]],
+                    [min_pt[0], max_pt[1], max_pt[2]],
+                ]
+                faces = [
+                    [0, 2, 1], [0, 3, 2],
+                    [4, 5, 6], [4, 6, 7],
+                    [0, 1, 5], [0, 5, 4],
+                    [2, 3, 7], [2, 7, 6],
+                    [0, 4, 7], [0, 7, 3],
+                    [1, 2, 6], [1, 6, 5],
+                ]
 
             hulls.append({
                 'vertices': vertices,
