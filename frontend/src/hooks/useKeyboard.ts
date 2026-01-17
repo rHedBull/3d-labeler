@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useSelectionStore, SelectionMode } from '../store/selectionStore'
+import { useSelectionStore, type SelectionMode } from '../store/selectionStore'
 import { usePointCloudStore } from '../store/pointCloudStore'
 
 const MODE_KEYS: Record<string, SelectionMode> = {

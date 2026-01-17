@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listFiles, SceneInfo } from '../lib/api'
+import { listFiles, type SceneInfo } from '../lib/api'
 import { usePointCloudStore } from '../store/pointCloudStore'
 
 export function FilePanel() {

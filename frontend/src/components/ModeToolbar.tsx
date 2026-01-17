@@ -1,4 +1,4 @@
-import { useSelectionStore, SelectionMode } from '../store/selectionStore'
+import { useSelectionStore, type SelectionMode } from '../store/selectionStore'
 
 const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] = [
   { id: 'box', key: 'B', label: 'Box Select', icon: '▢' },
