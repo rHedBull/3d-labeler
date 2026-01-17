@@ -2,8 +2,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
-from typing import List
+from typing import List, Any
 import base64
+import json
 import numpy as np
 
 from point_cloud import load_glb, load_ply, save_ply, PointCloud
@@ -54,10 +55,16 @@ class SupervoxelRequest(BaseModel):
     resolution: float = 0.1
 
 
+class SupervoxelHull(BaseModel):
+    vertices: List[List[float]]  # Nx3 vertices of the hull
+    faces: List[List[int]]  # Triangle faces (indices into vertices)
+
+
 class SupervoxelResponse(BaseModel):
     num_supervoxels: int
     supervoxel_ids: str  # base64 encoded Int32Array
     centroids: str  # base64 encoded Float32Array
+    hulls: List[SupervoxelHull]  # Convex hull for each supervoxel
 
 
 class ClusterRequest(BaseModel):
@@ -197,13 +204,20 @@ async def compute_supervoxels_endpoint(req: SupervoxelRequest):
         raise HTTPException(400, "No point cloud loaded")
 
     try:
-        sv_ids, centroids = compute_supervoxels(current_pc.points, req.resolution)
-        current_supervoxels = (sv_ids, centroids)
+        sv_ids, centroids, hulls = compute_supervoxels(current_pc.points, req.resolution, compute_hulls=True)
+        current_supervoxels = (sv_ids, centroids, hulls)
+
+        # Convert hulls to response format
+        hull_responses = [
+            SupervoxelHull(vertices=h['vertices'], faces=h['faces'])
+            for h in hulls
+        ]
 
         return SupervoxelResponse(
             num_supervoxels=len(centroids),
             supervoxel_ids=base64.b64encode(sv_ids.tobytes()).decode(),
             centroids=base64.b64encode(centroids.tobytes()).decode(),
+            hulls=hull_responses,
         )
     except Exception as e:
         raise HTTPException(500, f"Failed to compute supervoxels: {str(e)}")

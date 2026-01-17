@@ -7,6 +7,7 @@ import {
   base64ToUint8Array,
   base64ToInt32Array,
   computeSupervoxels as computeSupervoxelsAPI,
+  type SupervoxelHull,
 } from '../lib/api'
 
 // Class colors from labeling_classes.yaml
@@ -38,6 +39,8 @@ interface PointCloudState {
   labels: Int32Array | null
   instanceIds: Int32Array | null
   supervoxelIds: Int32Array | null
+  supervoxelCentroids: Float32Array | null
+  supervoxelHulls: SupervoxelHull[] | null
   numPoints: number
 
   // Scene info
@@ -57,6 +60,7 @@ interface PointCloudState {
   updateColorsFromLabels: () => void
   computeSupervoxels: (resolution?: number) => Promise<void>
   selectSupervoxel: (pointIndex: number, shiftKey: boolean, ctrlKey: boolean) => void
+  selectSupervoxelById: (supervoxelId: number, ctrlKey: boolean) => void
   selectGeometricCluster: (seedIndex: number, shiftKey: boolean, ctrlKey: boolean) => Promise<void>
   saveSession: () => void
   loadSession: () => boolean
@@ -69,6 +73,8 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   labels: null,
   instanceIds: null,
   supervoxelIds: null,
+  supervoxelCentroids: null,
+  supervoxelHulls: null,
   numPoints: 0,
   sceneName: null,
   loading: false,
@@ -169,7 +175,13 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
     try {
       const data = await computeSupervoxelsAPI(resolution)
       const supervoxelIds = base64ToInt32Array(data.supervoxel_ids)
-      set({ supervoxelIds, loading: false })
+      const supervoxelCentroids = base64ToFloat32Array(data.centroids)
+      set({
+        supervoxelIds,
+        supervoxelCentroids,
+        supervoxelHulls: data.hulls,
+        loading: false,
+      })
     } catch (e) {
       set({ loading: false, error: String(e) })
     }
@@ -184,6 +196,26 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
 
     for (let i = 0; i < numPoints; i++) {
       if (supervoxelIds[i] === targetSvId) {
+        if (ctrlKey) {
+          newSelection.delete(i)
+        } else {
+          newSelection.add(i)
+        }
+      }
+    }
+
+    get().setSelection(newSelection)
+  },
+
+  selectSupervoxelById: (supervoxelId: number, ctrlKey: boolean) => {
+    const { supervoxelIds, selectedIndices, numPoints } = get()
+    if (!supervoxelIds) return
+
+    // Always accumulate, use ctrl to remove
+    const newSelection = new Set<number>(selectedIndices)
+
+    for (let i = 0; i < numPoints; i++) {
+      if (supervoxelIds[i] === supervoxelId) {
         if (ctrlKey) {
           newSelection.delete(i)
         } else {

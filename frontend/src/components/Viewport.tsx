@@ -25,6 +25,101 @@ function getSupervoxelColor(id: number): [number, number, number] {
   return [r + m, g + m, b + m]
 }
 
+// Single supervoxel box mesh
+function SupervoxelBox({
+  hull,
+  svId,
+  isSelected,
+  onHullClick,
+}: {
+  hull: { vertices: number[][]; faces: number[][] }
+  svId: number
+  isSelected: boolean
+  onHullClick: (supervoxelId: number, ctrlKey: boolean) => void
+}) {
+  const geometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry()
+    const vertices = new Float32Array(hull.vertices.flat())
+    const indices = new Uint32Array(hull.faces.flat())
+    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3))
+    geo.setIndex(new THREE.BufferAttribute(indices, 1))
+    geo.computeVertexNormals()
+    return geo
+  }, [hull])
+
+  // Get color for this supervoxel
+  const color = useMemo(() => {
+    if (isSelected) return '#ffffff'
+    const goldenRatio = 0.618033988749895
+    const hue = (svId * goldenRatio) % 1
+    return new THREE.Color().setHSL(hue, 0.7, 0.5)
+  }, [svId, isSelected])
+
+  return (
+    <mesh
+      geometry={geometry}
+      onClick={(e) => {
+        e.stopPropagation()
+        onHullClick(svId, e.nativeEvent.ctrlKey)
+      }}
+      onPointerOver={(e) => {
+        e.stopPropagation()
+        document.body.style.cursor = 'pointer'
+      }}
+      onPointerOut={() => {
+        document.body.style.cursor = 'default'
+      }}
+    >
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={isSelected ? 0.5 : 0.2}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </mesh>
+  )
+}
+
+// Render transparent bounding boxes for supervoxels
+function SupervoxelHulls({
+  onHullClick,
+}: {
+  onHullClick: (supervoxelId: number, ctrlKey: boolean) => void
+}) {
+  const { supervoxelHulls, supervoxelIds, selectedIndices } = usePointCloudStore()
+  const { mode } = useSelectionStore()
+
+  // Build a set of selected supervoxel IDs for highlighting
+  const selectedSupervoxelIds = useMemo(() => {
+    if (!supervoxelIds) return new Set<number>()
+    const ids = new Set<number>()
+    for (const idx of selectedIndices) {
+      ids.add(supervoxelIds[idx])
+    }
+    return ids
+  }, [supervoxelIds, selectedIndices])
+
+  if (mode !== 'supervoxel' || !supervoxelHulls) return null
+
+  return (
+    <group>
+      {supervoxelHulls.map((hull, svId) => {
+        if (hull.faces.length === 0) return null
+        return (
+          <SupervoxelBox
+            key={svId}
+            hull={hull}
+            svId={svId}
+            isSelected={selectedSupervoxelIds.has(svId)}
+            onHullClick={onHullClick}
+          />
+        )
+      })}
+    </group>
+  )
+}
+
 function PointCloudMesh() {
   const meshRef = useRef<THREE.Points>(null)
   const { points, colors, numPoints, selectedIndices, supervoxelIds } = usePointCloudStore()
@@ -525,8 +620,13 @@ function ClickSelectionHandler() {
 
 export function Viewport() {
   const { mode } = useSelectionStore()
-  const { selectedIndices, setSelection } = usePointCloudStore()
+  const { selectedIndices, setSelection, selectSupervoxelById } = usePointCloudStore()
   const canvasRef = useRef<HTMLDivElement>(null)
+
+  // Handler for clicking on supervoxel hulls
+  const handleHullClick = useCallback((supervoxelId: number, ctrlKey: boolean) => {
+    selectSupervoxelById(supervoxelId, ctrlKey)
+  }, [selectSupervoxelById])
 
   // Box selection state
   const [box, setBox] = useState<{
@@ -643,6 +743,7 @@ export function Viewport() {
           }}
         />
         <PointCloudMesh />
+        <SupervoxelHulls onHullClick={handleHullClick} />
         <BoxSelectionHandler
           isDragging={isDragging}
           box={box}

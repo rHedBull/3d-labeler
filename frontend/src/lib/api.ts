@@ -48,10 +48,16 @@ export async function listFiles(): Promise<SceneInfo[]> {
   return res.json()
 }
 
+export interface SupervoxelHull {
+  vertices: number[][]  // Nx3 hull vertices
+  faces: number[][]     // Triangle faces as vertex indices
+}
+
 export interface SupervoxelResponse {
   num_supervoxels: number
   supervoxel_ids: string
   centroids: string
+  hulls: SupervoxelHull[]
 }
 
 export async function computeSupervoxels(resolution = 0.1): Promise<SupervoxelResponse> {

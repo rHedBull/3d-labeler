@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react'
 import { useSelectionStore, type SelectionMode } from '../store/selectionStore'
 import { usePointCloudStore } from '../store/pointCloudStore'
 
@@ -13,11 +14,39 @@ export function ModeToolbar() {
   const { mode, setMode, supervoxelResolution, setSupervoxelResolution } = useSelectionStore()
   const { computeSupervoxels, supervoxelIds, loading } = usePointCloudStore()
 
-  const handleResolutionChange = async (newResolution: number) => {
-    setSupervoxelResolution(newResolution)
-    // Recompute supervoxels with new resolution
-    await computeSupervoxels(newResolution)
+  // Local slider value for immediate visual feedback
+  const [localResolution, setLocalResolution] = useState(supervoxelResolution)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Sync local state when store value changes (e.g., on initial load)
+  useEffect(() => {
+    setLocalResolution(supervoxelResolution)
+  }, [supervoxelResolution])
+
+  // Debounced computation - only triggers 500ms after user stops dragging
+  const handleResolutionChange = (newResolution: number) => {
+    setLocalResolution(newResolution)
+
+    // Clear any pending computation
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+    }
+
+    // Schedule new computation after debounce delay
+    debounceRef.current = setTimeout(async () => {
+      setSupervoxelResolution(newResolution)
+      await computeSupervoxels(newResolution)
+    }, 500)
   }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current)
+      }
+    }
+  }, [])
 
   return (
     <div style={styles.container}>
@@ -42,17 +71,17 @@ export function ModeToolbar() {
       {mode === 'supervoxel' && (
         <div style={styles.sliderContainer}>
           <label style={styles.sliderLabel}>
-            Voxel Size: {supervoxelResolution.toFixed(2)}m
+            Voxel Size: {localResolution.toFixed(2)}m
+            {localResolution !== supervoxelResolution && !loading && ' (drag to apply)'}
           </label>
           <input
             type="range"
             min="0.05"
             max="0.5"
             step="0.01"
-            value={supervoxelResolution}
+            value={localResolution}
             onChange={(e) => handleResolutionChange(parseFloat(e.target.value))}
             style={styles.slider}
-            disabled={loading}
           />
           <div style={styles.sliderHints}>
             <span>Fine</span>
