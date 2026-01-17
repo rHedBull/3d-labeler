@@ -58,6 +58,8 @@ interface PointCloudState {
   computeSupervoxels: (resolution?: number) => Promise<void>
   selectSupervoxel: (pointIndex: number, shiftKey: boolean, ctrlKey: boolean) => void
   selectGeometricCluster: (seedIndex: number, shiftKey: boolean, ctrlKey: boolean) => Promise<void>
+  saveSession: () => void
+  loadSession: () => boolean
 }
 
 export const usePointCloudStore = create<PointCloudState>((set, get) => ({
@@ -214,5 +216,41 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
     } catch (e) {
       set({ loading: false, error: String(e) })
     }
+  },
+
+  saveSession: () => {
+    const { sceneName, labels, instanceIds } = get()
+    if (!sceneName || !labels || !instanceIds) return
+
+    const session = {
+      source_file: sceneName,
+      labels: Array.from(labels),
+      instance_ids: Array.from(instanceIds),
+      timestamp: new Date().toISOString(),
+    }
+
+    localStorage.setItem(`labeling-session-${sceneName}`, JSON.stringify(session))
+  },
+
+  loadSession: () => {
+    const { sceneName, labels } = get()
+    if (!sceneName || !labels) return false
+
+    const saved = localStorage.getItem(`labeling-session-${sceneName}`)
+    if (!saved) return false
+
+    try {
+      const session = JSON.parse(saved)
+      if (session.labels && session.labels.length === labels.length) {
+        const newLabels = new Int32Array(session.labels)
+        const newInstanceIds = new Int32Array(session.instance_ids || new Array(labels.length).fill(0))
+        set({ labels: newLabels, instanceIds: newInstanceIds })
+        get().updateColorsFromLabels()
+        return true
+      }
+    } catch (e) {
+      console.error('Failed to load session:', e)
+    }
+    return false
   },
 }))

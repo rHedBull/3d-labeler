@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Viewport } from './components/Viewport'
 import { FilePanel } from './components/FilePanel'
 import { ClassPanel } from './components/ClassPanel'
@@ -10,6 +11,14 @@ function App() {
   const { loading, error, numPoints, sceneName } = usePointCloudStore()
 
   useKeyboard()
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      usePointCloudStore.getState().saveSession()
+    }, 60000) // Every 60 seconds
+
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <div style={styles.container}>
