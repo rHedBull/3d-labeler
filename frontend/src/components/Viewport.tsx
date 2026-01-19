@@ -1757,7 +1757,7 @@ export function Viewport() {
         }}>
           {cylinderPhase === 'center' && 'Click to place cylinder center'}
           {cylinderPhase === 'radius' && 'Click second point to set radius'}
-          {cylinderPhase === 'height' && 'Move mouse to set height, click to fit'}
+          {cylinderPhase === 'height' && 'Click third point at end of pipe to set length'}
           {cylinderPhase === 'fitting' && 'Fitting cylinders...'}
           {cylinderPhase === 'selecting' && 'Click candidates to toggle, then Apply or Cancel'}
         </div>

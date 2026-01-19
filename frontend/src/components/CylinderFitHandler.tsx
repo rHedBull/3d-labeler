@@ -175,33 +175,39 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
         }
       }
     } else if (cylinderPhase === 'height') {
-      // Click 3: Lock height and trigger fitting
-      if (previewHeightRef.current > 0.01) {
-        setCylinderHeight(previewHeightRef.current)
+      // Click 3: Click a point at the end of the pipe to set height
+      const hit = findClosestPointToRay(raycaster.ray, points, numPoints, 1.0)
+      if (hit && cylinderCenter && cylinderAxis) {
+        // Project clicked point onto axis to get height
+        const toHit = hit.position.clone().sub(cylinderCenter)
+        const projectedLength = Math.abs(toHit.dot(cylinderAxis))
+        const height = Math.max(0.1, projectedLength * 2) // *2 because center is in middle
+
+        setCylinderHeight(height)
+        previewHeightRef.current = height
         setCylinderPhase('fitting')
 
         // Trigger API call
-        if (cylinderCenter && cylinderAxis) {
-          try {
-            const center: [number, number, number] = [
-              cylinderCenter.x,
-              cylinderCenter.y,
-              cylinderCenter.z,
-            ]
-            const axis: [number, number, number] = [
-              cylinderAxis.x,
-              cylinderAxis.y,
-              cylinderAxis.z,
-            ]
+        try {
+          const center: [number, number, number] = [
+            cylinderCenter.x,
+            cylinderCenter.y,
+            cylinderCenter.z,
+          ]
+          const axis: [number, number, number] = [
+            cylinderAxis.x,
+            cylinderAxis.y,
+            cylinderAxis.z,
+          ]
 
-            const candidates = await fitCylinders(
-              center,
-              axis,
-              previewHeightRef.current > 0 ? previewHeightRef.current : cylinderRadius,
-              previewHeightRef.current,
-              tolerance,
-              minInliers
-            )
+          const candidates = await fitCylinders(
+            center,
+            axis,
+            cylinderRadius,
+            height,
+            tolerance,
+            minInliers
+          )
 
             // Convert API response to FittedCylinder format
             const fittedCylinders: FittedCylinder[] = candidates.map(c => ({
