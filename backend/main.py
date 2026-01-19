@@ -10,6 +10,7 @@ import numpy as np
 from point_cloud import load_glb, load_ply, save_ply, PointCloud
 from supervoxels import compute_supervoxels
 from clustering import region_grow
+from fitting import fit_cylinders_in_region, fit_boxes_in_region
 
 app = FastAPI(title="Point Cloud Labeling API")
 
@@ -86,6 +87,49 @@ class SceneInfo(BaseModel):
     has_source: bool
     has_ground_truth: bool
     source_type: str | None
+
+
+class CylinderFitRequest(BaseModel):
+    center: List[float]  # [x, y, z]
+    axis: List[float]    # [x, y, z] normalized
+    radius: float
+    height: float
+    tolerance: float = 0.02
+    min_inliers: int = 500
+
+
+class CylinderCandidate(BaseModel):
+    id: int
+    center: List[float]
+    axis: List[float]
+    radius: float
+    height: float
+    point_indices: str  # base64 encoded Int32Array
+
+
+class CylinderFitResponse(BaseModel):
+    candidates: List[CylinderCandidate]
+
+
+class BoxFitRequest(BaseModel):
+    corner1: List[float]
+    corner2: List[float]
+    corner3: List[float]
+    height: float
+    tolerance: float = 0.02
+    min_inliers: int = 500
+
+
+class BoxCandidate(BaseModel):
+    id: int
+    center: List[float]
+    size: List[float]
+    rotation: List[float]  # euler angles xyz
+    point_indices: str  # base64 encoded Int32Array
+
+
+class BoxFitResponse(BaseModel):
+    candidates: List[BoxCandidate]
 
 
 @app.get("/health")
@@ -263,3 +307,72 @@ async def compute_cluster(req: ClusterRequest):
         )
     except Exception as e:
         raise HTTPException(500, f"Failed to compute cluster: {str(e)}")
+
+
+@app.post("/fit-cylinders", response_model=CylinderFitResponse)
+async def fit_cylinders(req: CylinderFitRequest):
+    global current_pc
+
+    if current_pc is None:
+        raise HTTPException(400, "No point cloud loaded")
+
+    try:
+        candidates = fit_cylinders_in_region(
+            current_pc.points.reshape(-1, 3),
+            np.array(req.center),
+            np.array(req.axis),
+            req.radius,
+            req.height,
+            req.tolerance,
+            req.min_inliers,
+        )
+
+        response_candidates = []
+        for i, c in enumerate(candidates):
+            indices = np.array(c['point_indices'], dtype=np.int32)
+            response_candidates.append(CylinderCandidate(
+                id=i,
+                center=c['center'],
+                axis=c['axis'],
+                radius=c['radius'],
+                height=c['height'],
+                point_indices=base64.b64encode(indices.tobytes()).decode(),
+            ))
+
+        return CylinderFitResponse(candidates=response_candidates)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fit cylinders: {str(e)}")
+
+
+@app.post("/fit-boxes", response_model=BoxFitResponse)
+async def fit_boxes(req: BoxFitRequest):
+    global current_pc
+
+    if current_pc is None:
+        raise HTTPException(400, "No point cloud loaded")
+
+    try:
+        candidates = fit_boxes_in_region(
+            current_pc.points.reshape(-1, 3),
+            np.array(req.corner1),
+            np.array(req.corner2),
+            np.array(req.corner3),
+            req.height,
+            req.tolerance,
+            req.min_inliers,
+        )
+
+        response_candidates = []
+        for i, c in enumerate(candidates):
+            indices = np.array(c['point_indices'], dtype=np.int32)
+            response_candidates.append(BoxCandidate(
+                id=i,
+                center=c['center'],
+                size=c['size'],
+                rotation=c['rotation'],
+                point_indices=base64.b64encode(indices.tobytes()).decode(),
+            ))
+
+        return BoxFitResponse(candidates=response_candidates)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fit boxes: {str(e)}")
