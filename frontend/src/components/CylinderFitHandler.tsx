@@ -209,24 +209,23 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
             minInliers
           )
 
-            // Convert API response to FittedCylinder format
-            const fittedCylinders: FittedCylinder[] = candidates.map(c => ({
-              id: c.id,
-              center: new THREE.Vector3(c.center[0], c.center[1], c.center[2]),
-              axis: new THREE.Vector3(c.axis[0], c.axis[1], c.axis[2]),
-              radius: c.radius,
-              height: c.height,
-              pointIndices: Array.from(c.pointIndices),
-              accepted: true, // Default to accepted
-            }))
+          // Convert API response to FittedCylinder format
+          const fittedCylinders: FittedCylinder[] = candidates.map(c => ({
+            id: c.id,
+            center: new THREE.Vector3(c.center[0], c.center[1], c.center[2]),
+            axis: new THREE.Vector3(c.axis[0], c.axis[1], c.axis[2]),
+            radius: c.radius,
+            height: c.height,
+            pointIndices: Array.from(c.pointIndices),
+            accepted: true, // Default to accepted
+          }))
 
-            setFittedCylinders(fittedCylinders)
-            setCylinderPhase('selecting')
-            onCandidatesReady()
-          } catch (error) {
-            console.error('Failed to fit cylinders:', error)
-            setCylinderPhase('center')
-          }
+          setFittedCylinders(fittedCylinders)
+          setCylinderPhase('selecting')
+          onCandidatesReady()
+        } catch (error) {
+          console.error('Failed to fit cylinders:', error)
+          setCylinderPhase('center')
         }
       }
     }
