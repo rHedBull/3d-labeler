@@ -156,18 +156,23 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
         setCylinderPhase('radius')
       }
     } else if (cylinderPhase === 'radius') {
-      // Click 2: Lock radius
-      if (previewRadiusRef.current > 0.01) {
-        setCylinderRadius(previewRadiusRef.current)
+      // Click 2: Click a second point to set radius as distance between center and this point
+      const hit = findClosestPointToRay(raycaster.ray, points, numPoints, 1.0)
+      if (hit && cylinderCenter) {
+        const radius = cylinderCenter.distanceTo(hit.position)
+        if (radius > 0.01) {
+          setCylinderRadius(radius)
+          previewRadiusRef.current = radius
 
-        // Create plane for height adjustment (perpendicular to view direction, through center)
-        if (cylinderCenter && cylinderAxis) {
-          const viewDir = new THREE.Vector3()
-          camera.getWorldDirection(viewDir)
-          heightPlaneRef.current.setFromNormalAndCoplanarPoint(viewDir, cylinderCenter)
+          // Create plane for height adjustment (perpendicular to view direction, through center)
+          if (cylinderAxis) {
+            const viewDir = new THREE.Vector3()
+            camera.getWorldDirection(viewDir)
+            heightPlaneRef.current.setFromNormalAndCoplanarPoint(viewDir, cylinderCenter)
+          }
+
+          setCylinderPhase('height')
         }
-
-        setCylinderPhase('height')
       }
     } else if (cylinderPhase === 'height') {
       // Click 3: Lock height and trigger fitting
