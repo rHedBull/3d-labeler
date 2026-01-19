@@ -4,6 +4,7 @@ import { FilePanel } from './components/FilePanel'
 import { ClassPanel } from './components/ClassPanel'
 import { ModeToolbar } from './components/ModeToolbar'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { FitCandidatesPanel } from './components/FitCandidatesPanel'
 import { useKeyboard } from './hooks/useKeyboard'
 import { usePointCloudStore } from './store/pointCloudStore'
 
@@ -41,6 +42,7 @@ function App() {
         <div style={styles.viewport}>
           <ModeToolbar />
           <ConfirmDialog />
+          <FitCandidatesPanel />
           <Viewport />
         </div>
 
