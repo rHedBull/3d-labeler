@@ -145,13 +145,13 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
       if (hit) {
         setCylinderCenter(hit.position)
 
-        // Default axis is camera up direction
-        const cameraUp = new THREE.Vector3(0, 1, 0)
-        cameraUp.applyQuaternion(camera.quaternion)
-        setCylinderAxis(cameraUp.normalize())
+        // Axis is camera view direction (so cylinder base is parallel to screen)
+        const viewDir = new THREE.Vector3()
+        camera.getWorldDirection(viewDir)
+        setCylinderAxis(viewDir.normalize())
 
-        // Create plane perpendicular to axis for radius adjustment
-        radiusPlaneRef.current.setFromNormalAndCoplanarPoint(cameraUp, hit.position)
+        // Create plane perpendicular to axis (parallel to screen) for radius adjustment
+        radiusPlaneRef.current.setFromNormalAndCoplanarPoint(viewDir, hit.position)
 
         setCylinderPhase('radius')
       }
