@@ -41,6 +41,7 @@ interface PointCloudState {
   supervoxelIds: Int32Array | null
   supervoxelCentroids: Float32Array | null
   supervoxelHulls: SupervoxelHull[] | null
+  supervoxelPointMap: Map<number, number[]> | null  // Maps supervoxel ID -> point indices
   numPoints: number
 
   // Scene info
@@ -82,6 +83,7 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   supervoxelIds: null,
   supervoxelCentroids: null,
   supervoxelHulls: null,
+  supervoxelPointMap: null,
   numPoints: 0,
   sceneName: null,
   loading: false,
@@ -98,6 +100,17 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
       const colors = data.colors ? base64ToUint8Array(data.colors) : new Uint8Array(data.num_points * 3).fill(128)
       const labels = base64ToInt32Array(data.labels)
 
+      // Use returned instance_ids if available, otherwise initialize to zeros
+      const instanceIds = data.instance_ids
+        ? base64ToInt32Array(data.instance_ids)
+        : new Int32Array(data.num_points)
+
+      // Compute next instance ID from max existing
+      let maxInstanceId = 0
+      for (let i = 0; i < instanceIds.length; i++) {
+        if (instanceIds[i] > maxInstanceId) maxInstanceId = instanceIds[i]
+      }
+
       // Extract scene name from path
       const sceneName = path.split('/')[0]
 
@@ -106,11 +119,12 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
         colors: new Uint8Array(colors),
         originalColors: new Uint8Array(colors),
         labels,
-        instanceIds: new Int32Array(data.num_points),
+        instanceIds,
         numPoints: data.num_points,
         sceneName,
         loading: false,
         selectedIndices: new Set(),
+        nextInstanceId: maxInstanceId + 1,
       })
 
       // Apply label colors if any labels exist
@@ -196,10 +210,26 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
       const data = await computeSupervoxelsAPI(resolution, instanceIds || undefined)
       const supervoxelIds = base64ToInt32Array(data.supervoxel_ids)
       const supervoxelCentroids = base64ToFloat32Array(data.centroids)
+
+      // Build point map for O(1) lookups: supervoxelId -> [pointIndices]
+      const supervoxelPointMap = new Map<number, number[]>()
+      for (let i = 0; i < supervoxelIds.length; i++) {
+        const svId = supervoxelIds[i]
+        if (svId >= 0) {
+          const arr = supervoxelPointMap.get(svId)
+          if (arr) {
+            arr.push(i)
+          } else {
+            supervoxelPointMap.set(svId, [i])
+          }
+        }
+      }
+
       set({
         supervoxelIds,
         supervoxelCentroids,
         supervoxelHulls: data.hulls,
+        supervoxelPointMap,
         loading: false,
       })
     } catch (e) {
@@ -208,19 +238,18 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   },
 
   selectSupervoxel: (pointIndex: number, shiftKey: boolean, ctrlKey: boolean) => {
-    const { supervoxelIds, selectedIndices, numPoints } = get()
-    if (!supervoxelIds) return
+    const { supervoxelIds, supervoxelPointMap, selectedIndices } = get()
+    if (!supervoxelIds || !supervoxelPointMap) return
 
     const targetSvId = supervoxelIds[pointIndex]
+    const indices = supervoxelPointMap.get(targetSvId) || []
     const newSelection = new Set<number>(shiftKey ? selectedIndices : [])
 
-    for (let i = 0; i < numPoints; i++) {
-      if (supervoxelIds[i] === targetSvId) {
-        if (ctrlKey) {
-          newSelection.delete(i)
-        } else {
-          newSelection.add(i)
-        }
+    for (const i of indices) {
+      if (ctrlKey) {
+        newSelection.delete(i)
+      } else {
+        newSelection.add(i)
       }
     }
 
@@ -228,19 +257,18 @@ export const usePointCloudStore = create<PointCloudState>((set, get) => ({
   },
 
   selectSupervoxelById: (supervoxelId: number, ctrlKey: boolean) => {
-    const { supervoxelIds, selectedIndices, numPoints } = get()
-    if (!supervoxelIds) return
+    const { supervoxelPointMap, selectedIndices } = get()
+    if (!supervoxelPointMap) return
 
+    const indices = supervoxelPointMap.get(supervoxelId) || []
     // Always accumulate, use ctrl to remove
     const newSelection = new Set<number>(selectedIndices)
 
-    for (let i = 0; i < numPoints; i++) {
-      if (supervoxelIds[i] === supervoxelId) {
-        if (ctrlKey) {
-          newSelection.delete(i)
-        } else {
-          newSelection.add(i)
-        }
+    for (const i of indices) {
+      if (ctrlKey) {
+        newSelection.delete(i)
+      } else {
+        newSelection.add(i)
       }
     }
 

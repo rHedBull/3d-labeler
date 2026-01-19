@@ -5,6 +5,7 @@ export interface LoadResponse {
   points: string  // base64
   colors: string | null
   labels: string
+  instance_ids: string | null
 }
 
 export interface SceneInfo {

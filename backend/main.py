@@ -37,6 +37,7 @@ class LoadResponse(BaseModel):
     points: str  # base64 encoded Float32Array
     colors: str | None  # base64 encoded Uint8Array
     labels: str  # base64 encoded Int32Array
+    instance_ids: str | None  # base64 encoded Int32Array
 
 
 class SaveRequest(BaseModel):
@@ -154,6 +155,7 @@ async def load_file(req: LoadRequest):
         points=base64.b64encode(current_pc.points.tobytes()).decode(),
         colors=base64.b64encode(current_pc.colors.tobytes()).decode() if current_pc.colors is not None else None,
         labels=base64.b64encode(current_pc.labels.tobytes()).decode(),
+        instance_ids=base64.b64encode(current_pc.instance_ids.tobytes()).decode() if current_pc.instance_ids is not None else None,
     )
 
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useSelectionStore, type SelectionMode, type NavigationMode } from '../store/selectionStore'
+import { useSelectionStore, type SelectionMode } from '../store/selectionStore'
 import { usePointCloudStore } from '../store/pointCloudStore'
 
 const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] = [
@@ -8,6 +8,7 @@ const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] =
   { id: 'sphere', key: 'S', label: 'Sphere Select', icon: '●' },
   { id: 'geometric', key: 'G', label: 'Geometric Cluster', icon: '◈' },
   { id: 'supervoxel', key: 'V', label: 'Supervoxel', icon: '⬡' },
+  { id: 'rapid', key: 'R', label: 'Rapid Labeling', icon: '⚡' },
 ]
 
 export function ModeToolbar() {
@@ -88,8 +89,8 @@ export function ModeToolbar() {
         </div>
       )}
 
-      {/* Supervoxel resolution slider - shown when in supervoxel mode */}
-      {mode === 'supervoxel' && (
+      {/* Supervoxel resolution slider - shown when in supervoxel or rapid mode */}
+      {(mode === 'supervoxel' || mode === 'rapid') && (
         <div style={styles.sliderContainer}>
           <label style={styles.sliderLabel}>
             Voxel Size: {localResolution.toFixed(2)}m

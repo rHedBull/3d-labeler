@@ -8,6 +8,7 @@ const MODE_KEYS: Record<string, SelectionMode> = {
   s: 'sphere',
   g: 'geometric',
   v: 'supervoxel',
+  r: 'rapid',
 }
 
 const CLASS_KEYS = ['0', '1', '2', '3', '4', '5', '6']
