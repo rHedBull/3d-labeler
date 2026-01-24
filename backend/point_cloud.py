@@ -69,15 +69,10 @@ def load_glb(path: Path, num_samples: int = 500000) -> tuple['PointCloud', trime
                 # Get face vertex indices for sampled points
                 face_vertices = mesh.faces[face_indices]
 
-                # Generate random barycentric coordinates for interpolation
-                r1 = np.random.random(len(face_indices))
-                r2 = np.random.random(len(face_indices))
-                sqrt_r1 = np.sqrt(r1)
-                bary = np.column_stack([
-                    1 - sqrt_r1,
-                    sqrt_r1 * (1 - r2),
-                    sqrt_r1 * r2
-                ])
+                # Compute barycentric coordinates for the sampled points
+                triangles = mesh.triangles[face_indices]
+                bary = trimesh.triangles.points_to_barycentric(triangles, points)
+                bary = np.clip(bary, 0.0, 1.0)
 
                 # Interpolate UV coordinates
                 uv_sampled = (
