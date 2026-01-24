@@ -53,7 +53,7 @@ export async function extractPoints(
   indices: Int32Array,
   sceneName: string,
   filename: string
-): Promise<{ success: boolean; num_points: number; path: string }> {
+): Promise<{ success: boolean; num_points: number; path: string; mesh_path: string | null }> {
   const res = await fetch(`${API_BASE}/extract`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

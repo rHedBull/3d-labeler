@@ -6,8 +6,8 @@ from typing import List, Any
 import base64
 import json
 import numpy as np
-
-from point_cloud import load_glb, load_ply, save_ply, PointCloud
+import trimesh
+from point_cloud import load_glb, load_ply, save_ply, PointCloud, extract_faces_from_mesh
 from supervoxels import compute_supervoxels
 from clustering import region_grow
 from fitting import fit_cylinders_in_region, fit_boxes_in_region
@@ -22,8 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Store current point cloud in memory
+# Store current point cloud and mesh in memory
 current_pc: PointCloud | None = None
+current_mesh: trimesh.Trimesh | None = None  # Original mesh for face extraction (GLB only)
 current_supervoxels: tuple[np.ndarray, np.ndarray] | None = None
 DATA_DIR = Path(__file__).parent.parent / "data" / "real"
 
@@ -86,12 +87,14 @@ class ExtractRequest(BaseModel):
     indices: str  # base64 encoded Int32Array
     scene_name: str
     filename: str  # output filename (without .ply extension)
+    generate_mesh: bool = True  # whether to also generate a mesh from original faces
 
 
 class ExtractResponse(BaseModel):
     success: bool
     num_points: int
     path: str
+    mesh_path: str | None = None  # path to reconstructed mesh if generated
 
 
 class SceneInfo(BaseModel):
@@ -183,7 +186,7 @@ async def list_files():
 
 @app.post("/load", response_model=LoadResponse)
 async def load_file(req: LoadRequest):
-    global current_pc
+    global current_pc, current_mesh
 
     # Validate path doesn't escape DATA_DIR
     file_path = (DATA_DIR / req.path).resolve()
@@ -196,9 +199,9 @@ async def load_file(req: LoadRequest):
     suffix = file_path.suffix.lower()
     try:
         if suffix == '.glb':
-            current_pc = load_glb(file_path, req.num_samples)
+            current_pc, current_mesh = load_glb(file_path, req.num_samples)
         elif suffix == '.ply':
-            current_pc = load_ply(file_path)
+            current_pc, current_mesh = load_ply(file_path)
         else:
             raise HTTPException(400, f"Unsupported file type: {suffix}")
     except HTTPException:
@@ -296,10 +299,24 @@ async def extract_points(req: ExtractRequest):
 
         num_saved = save_ply(output_path, extracted_pc)
 
+        # Generate mesh from original faces if requested (GLB sources only)
+        mesh_path = None
+        if req.generate_mesh and len(indices) >= 100 and current_mesh is not None:
+            try:
+                mesh_output_path = output_dir / f"{req.filename}.glb"
+                extracted_mesh = extract_faces_from_mesh(
+                    current_mesh, current_pc.points, indices, padding=0.01
+                )
+                extracted_mesh.export(str(mesh_output_path))
+                mesh_path = str(mesh_output_path.relative_to(DATA_DIR.parent.parent))
+            except Exception as mesh_error:
+                print(f"Mesh generation failed: {mesh_error}")
+
         return ExtractResponse(
             success=True,
             num_points=num_saved,
             path=str(output_path.relative_to(DATA_DIR.parent.parent)),
+            mesh_path=mesh_path,
         )
     except HTTPException:
         raise
