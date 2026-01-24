@@ -49,6 +49,24 @@ export async function listFiles(): Promise<SceneInfo[]> {
   return res.json()
 }
 
+export async function extractPoints(
+  indices: Int32Array,
+  sceneName: string,
+  filename: string
+): Promise<{ success: boolean; num_points: number; path: string }> {
+  const res = await fetch(`${API_BASE}/extract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      indices: arrayToBase64(indices),
+      scene_name: sceneName,
+      filename,
+    }),
+  })
+  if (!res.ok) throw new Error(`Extract failed: ${res.statusText}`)
+  return res.json()
+}
+
 export interface SupervoxelHull {
   vertices: number[][]  // Nx3 hull vertices
   faces: number[][]     // Triangle faces as vertex indices

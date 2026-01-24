@@ -16,7 +16,7 @@ app = FastAPI(title="Point Cloud Labeling API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5175"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -80,6 +80,18 @@ class ClusterRequest(BaseModel):
 class ClusterResponse(BaseModel):
     indices: str  # base64 encoded Int32Array
     num_points: int
+
+
+class ExtractRequest(BaseModel):
+    indices: str  # base64 encoded Int32Array
+    scene_name: str
+    filename: str  # output filename (without .ply extension)
+
+
+class ExtractResponse(BaseModel):
+    success: bool
+    num_points: int
+    path: str
 
 
 class SceneInfo(BaseModel):
@@ -241,6 +253,58 @@ async def save_file(req: SaveRequest):
         raise
     except Exception as e:
         raise HTTPException(500, f"Failed to save file: {str(e)}")
+
+
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_points(req: ExtractRequest):
+    global current_pc
+
+    if current_pc is None:
+        raise HTTPException(400, "No point cloud loaded")
+
+    # Validate scene_name doesn't escape DATA_DIR
+    output_dir = (DATA_DIR / req.scene_name).resolve()
+    if not str(output_dir).startswith(str(DATA_DIR.resolve())):
+        raise HTTPException(400, "Invalid scene_name: path traversal not allowed")
+
+    # Validate filename
+    if not req.filename or '/' in req.filename or '\\' in req.filename:
+        raise HTTPException(400, "Invalid filename")
+
+    try:
+        # Decode indices
+        indices = np.frombuffer(base64.b64decode(req.indices), dtype=np.int32)
+
+        if len(indices) == 0:
+            raise HTTPException(400, "No points selected")
+
+        # Validate indices
+        if np.any(indices < 0) or np.any(indices >= len(current_pc)):
+            raise HTTPException(400, "Invalid point indices")
+
+        # Extract selected points
+        extracted_pc = PointCloud(
+            points=current_pc.points[indices],
+            colors=current_pc.colors[indices] if current_pc.colors is not None else None,
+            labels=current_pc.labels[indices] if current_pc.labels is not None else None,
+            instance_ids=current_pc.instance_ids[indices] if current_pc.instance_ids is not None else None,
+        )
+
+        # Save to file
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{req.filename}.ply"
+
+        num_saved = save_ply(output_path, extracted_pc)
+
+        return ExtractResponse(
+            success=True,
+            num_points=num_saved,
+            path=str(output_path.relative_to(DATA_DIR.parent.parent)),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to extract points: {str(e)}")
 
 
 @app.post("/compute-supervoxels", response_model=SupervoxelResponse)
