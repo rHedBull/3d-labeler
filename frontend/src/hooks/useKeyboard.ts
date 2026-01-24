@@ -9,6 +9,8 @@ const MODE_KEYS: Record<string, SelectionMode> = {
   g: 'geometric',
   v: 'supervoxel',
   r: 'rapid',
+  c: 'cylinder-fit',
+  x: 'box-fit',
 }
 
 const CLASS_KEYS = ['0', '1', '2', '3', '4', '5', '6']

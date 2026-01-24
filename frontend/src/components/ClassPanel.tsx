@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { usePointCloudStore, CLASS_COLORS, CLASS_NAMES } from '../store/pointCloudStore'
+import { extractPoints } from '../lib/api'
 
 interface LabeledInstance {
   classId: number
@@ -19,12 +20,33 @@ export function ClassPanel() {
     setSelection,
     hideLabeledPoints,
     setHideLabeledPoints,
+    sceneName,
   } = usePointCloudStore()
+
+  const [extracting, setExtracting] = useState(false)
 
   const handleAssignClass = (classId: number) => {
     if (selectedIndices.size === 0) return
     setLabels(Array.from(selectedIndices), classId)
     clearSelection()
+  }
+
+  const handleExtract = async () => {
+    if (selectedIndices.size === 0 || !sceneName) return
+
+    const filename = prompt('Enter filename for extracted points:', `extracted_${Date.now()}`)
+    if (!filename) return
+
+    setExtracting(true)
+    try {
+      const indices = new Int32Array(Array.from(selectedIndices))
+      const result = await extractPoints(indices, sceneName, filename)
+      alert(`Extracted ${result.num_points.toLocaleString()} points to ${result.path}`)
+    } catch (e) {
+      alert(`Extract failed: ${e}`)
+    } finally {
+      setExtracting(false)
+    }
   }
 
   // Count labels and collect instances
@@ -90,8 +112,17 @@ export function ClassPanel() {
       <h3 style={styles.title}>Classes</h3>
 
       {selectedIndices.size > 0 && (
-        <div style={styles.selection}>
-          {selectedIndices.size.toLocaleString()} selected
+        <div style={styles.selectionSection}>
+          <div style={styles.selection}>
+            {selectedIndices.size.toLocaleString()} selected
+          </div>
+          <button
+            onClick={handleExtract}
+            disabled={extracting}
+            style={styles.extractButton}
+          >
+            {extracting ? 'Extracting...' : 'Extract to PLY'}
+          </button>
         </div>
       )}
 
@@ -194,12 +225,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
   },
+  selectionSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
   selection: {
     padding: '6px 10px',
     background: '#4a6a4a',
     borderRadius: 4,
     fontSize: 12,
     textAlign: 'center',
+  },
+  extractButton: {
+    padding: '6px 10px',
+    background: '#4a5a8a',
+    border: 'none',
+    borderRadius: 4,
+    color: 'white',
+    fontSize: 12,
+    cursor: 'pointer',
   },
   list: {
     display: 'flex',

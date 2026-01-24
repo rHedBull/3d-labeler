@@ -9,6 +9,8 @@ const MODES: { id: SelectionMode; key: string; label: string; icon: string }[] =
   { id: 'geometric', key: 'G', label: 'Geometric Cluster', icon: '◈' },
   { id: 'supervoxel', key: 'V', label: 'Supervoxel', icon: '⬡' },
   { id: 'rapid', key: 'R', label: 'Rapid Labeling', icon: '⚡' },
+  { id: 'cylinder-fit', key: 'C', label: 'Fit Cylinder', icon: '⬭' },
+  { id: 'box-fit', key: 'X', label: 'Fit Box', icon: '⬜' },
 ]
 
 export function ModeToolbar() {

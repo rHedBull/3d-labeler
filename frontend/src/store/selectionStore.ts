@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type SelectionMode = 'box' | 'lasso' | 'sphere' | 'geometric' | 'supervoxel' | 'rapid'
+export type SelectionMode = 'box' | 'lasso' | 'sphere' | 'geometric' | 'supervoxel' | 'rapid' | 'cylinder-fit' | 'box-fit'
 export type NavigationMode = 'orbit' | 'walk'
 
 interface SelectionState {

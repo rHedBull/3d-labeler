@@ -8,6 +8,10 @@ const OrbitControlsContext = createContext<React.RefObject<OrbitControlsImpl | n
 import * as THREE from 'three'
 import { usePointCloudStore } from '../store/pointCloudStore'
 import { useSelectionStore } from '../store/selectionStore'
+import { CylinderFitHandler } from './CylinderFitHandler'
+import { BoxFitHandler } from './BoxFitHandler'
+import { FittedPrimitivesView } from './FittedPrimitivesView'
+import { useFittingStore } from '../store/fittingStore'
 
 // Generate a distinct color for a supervoxel ID using golden ratio for good distribution
 function getSupervoxelColor(id: number): [number, number, number] {
@@ -1423,6 +1427,7 @@ function ClickSelectionHandler() {
 export function Viewport() {
   const { mode, navigationMode, rapidLabeling, rapidCurrentIndex } = useSelectionStore()
   const { selectedIndices, setSelection, selectSupervoxelById, supervoxelIds, supervoxelPointMap, labels, instanceIds } = usePointCloudStore()
+  const { cylinderPhase, boxPhase } = useFittingStore()
   const canvasRef = useRef<HTMLDivElement>(null)
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null)
 
@@ -1575,6 +1580,9 @@ export function Viewport() {
           <ClickSelectionHandler />
           <WalkControls />
           <RapidLabelingController />
+          <CylinderFitHandler onCandidatesReady={() => {}} />
+          <BoxFitHandler onCandidatesReady={() => {}} />
+          <FittedPrimitivesView />
         </OrbitControlsContext.Provider>
       </Canvas>
 
@@ -1732,6 +1740,49 @@ export function Viewport() {
               : 'Waiting for supervoxels... Use slider above to adjust voxel size'}
           </div>
         </>
+      )}
+
+      {/* Cylinder fit mode instructions */}
+      {mode === 'cylinder-fit' && (
+        <div style={{
+          position: 'absolute',
+          bottom: 12,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: 4,
+          fontSize: 12,
+        }}>
+          {cylinderPhase === 'center' && 'Click to place cylinder center'}
+          {cylinderPhase === 'radius' && 'Click second point to set radius'}
+          {cylinderPhase === 'height' && 'Click third point at end of pipe to set length'}
+          {cylinderPhase === 'fitting' && 'Fitting cylinders...'}
+          {cylinderPhase === 'selecting' && 'Click candidates to toggle, then Apply or Cancel'}
+        </div>
+      )}
+
+      {/* Box fit mode instructions */}
+      {mode === 'box-fit' && (
+        <div style={{
+          position: 'absolute',
+          bottom: 12,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: 4,
+          fontSize: 12,
+        }}>
+          {boxPhase === 'corner1' && 'Click first corner of base rectangle'}
+          {boxPhase === 'corner2' && 'Click second corner'}
+          {boxPhase === 'corner3' && 'Click third corner'}
+          {boxPhase === 'height' && 'Move mouse to set height, click to fit'}
+          {boxPhase === 'fitting' && 'Fitting boxes...'}
+          {boxPhase === 'selecting' && 'Click candidates to toggle, then Apply or Cancel'}
+        </div>
       )}
     </div>
   )

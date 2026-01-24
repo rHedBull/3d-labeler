@@ -49,6 +49,24 @@ export async function listFiles(): Promise<SceneInfo[]> {
   return res.json()
 }
 
+export async function extractPoints(
+  indices: Int32Array,
+  sceneName: string,
+  filename: string
+): Promise<{ success: boolean; num_points: number; path: string }> {
+  const res = await fetch(`${API_BASE}/extract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      indices: arrayToBase64(indices),
+      scene_name: sceneName,
+      filename,
+    }),
+  })
+  if (!res.ok) throw new Error(`Extract failed: ${res.statusText}`)
+  return res.json()
+}
+
 export interface SupervoxelHull {
   vertices: number[][]  // Nx3 hull vertices
   faces: number[][]     // Triangle faces as vertex indices
@@ -135,4 +153,96 @@ function arrayToBase64(arr: Int32Array | Float32Array | Uint8Array): string {
     binary += String.fromCharCode(bytes[i])
   }
   return btoa(binary)
+}
+
+export interface CylinderCandidate {
+  id: number
+  center: [number, number, number]
+  axis: [number, number, number]
+  radius: number
+  height: number
+  pointIndices: Int32Array
+}
+
+export interface BoxCandidate {
+  id: number
+  center: [number, number, number]
+  size: [number, number, number]
+  rotation: [number, number, number]
+  pointIndices: Int32Array
+}
+
+export async function fitCylinders(
+  center: [number, number, number],
+  axis: [number, number, number],
+  radius: number,
+  height: number,
+  tolerance: number = 0.02,
+  minInliers: number = 500,
+): Promise<CylinderCandidate[]> {
+  const res = await fetch(`${API_BASE}/fit-cylinders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      center,
+      axis,
+      radius,
+      height,
+      tolerance,
+      min_inliers: minInliers,
+    }),
+  })
+
+  if (!res.ok) {
+    throw new Error(`Failed to fit cylinders: ${res.statusText}`)
+  }
+
+  const data = await res.json()
+  return data.candidates.map((c: any) => ({
+    id: c.id,
+    center: c.center,
+    axis: c.axis,
+    radius: c.radius,
+    height: c.height,
+    pointIndices: new Int32Array(
+      Uint8Array.from(atob(c.point_indices), c => c.charCodeAt(0)).buffer
+    ),
+  }))
+}
+
+export async function fitBoxes(
+  corner1: [number, number, number],
+  corner2: [number, number, number],
+  corner3: [number, number, number],
+  height: number,
+  tolerance: number = 0.02,
+  minInliers: number = 500,
+): Promise<BoxCandidate[]> {
+  const res = await fetch(`${API_BASE}/fit-boxes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      corner1,
+      corner2,
+      corner3,
+      height,
+      tolerance,
+      min_inliers: minInliers,
+    }),
+  })
+
+  if (!res.ok) {
+    throw new Error(`Failed to fit boxes: ${res.statusText}`)
+  }
+
+  const data = await res.json()
+  return data.candidates.map((c: any) => ({
+    id: c.id,
+    center: c.center,
+    size: c.size,
+    rotation: c.rotation,
+    pointIndices: new Int32Array(
+      Uint8Array.from(atob(c.point_indices), c => c.charCodeAt(0)).buffer
+    ),
+  }))
 }
