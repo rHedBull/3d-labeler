@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { useThree, useFrame } from '@react-three/fiber'
+import { useThree } from '@react-three/fiber'
 import { useSelectionStore } from '../store/selectionStore'
 import { useFittingStore, type FittedCylinder } from '../store/fittingStore'
 import { usePointCloudStore } from '../store/pointCloudStore'
@@ -79,9 +79,9 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
     resetCylinder,
   } = useFittingStore()
 
-  // Refs for preview during mouse movement
-  const previewRadiusRef = useRef<number>(0)
-  const previewHeightRef = useRef<number>(0)
+  // State for preview during mouse movement (state triggers re-renders)
+  const [previewRadius, setPreviewRadius] = useState(0)
+  const [previewHeight, setPreviewHeight] = useState(0)
   const radiusPlaneRef = useRef<THREE.Plane>(new THREE.Plane())
   const heightPlaneRef = useRef<THREE.Plane>(new THREE.Plane())
 
@@ -162,7 +162,7 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
         const radius = cylinderCenter.distanceTo(hit.position)
         if (radius > 0.01) {
           setCylinderRadius(radius)
-          previewRadiusRef.current = radius
+          setPreviewRadius(radius)
 
           // Create plane for height adjustment (perpendicular to view direction, through center)
           if (cylinderAxis) {
@@ -184,7 +184,7 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
         const height = Math.max(0.1, projectedLength * 2) // *2 because center is in middle
 
         setCylinderHeight(height)
-        previewHeightRef.current = height
+        setPreviewHeight(height)
         setCylinderPhase('fitting')
 
         // Trigger API call
@@ -246,7 +246,7 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
       // Calculate radius as distance from center to mouse on the plane
       const intersection = getPlaneIntersection(e, radiusPlaneRef.current)
       if (intersection) {
-        previewRadiusRef.current = cylinderCenter.distanceTo(intersection)
+        setPreviewRadius(cylinderCenter.distanceTo(intersection))
       }
     } else if (cylinderPhase === 'height' && cylinderCenter && cylinderAxis) {
       // Calculate height by projecting mouse movement along axis
@@ -255,7 +255,7 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
         // Project the vector from center to intersection onto the axis
         const toIntersection = intersection.clone().sub(cylinderCenter)
         const projectedLength = Math.abs(toIntersection.dot(cylinderAxis))
-        previewHeightRef.current = projectedLength * 2 // Double for full height (above and below center)
+        setPreviewHeight(projectedLength * 2) // Double for full height (above and below center)
       }
     }
   }, [mode, cylinderPhase, cylinderCenter, cylinderAxis, getPlaneIntersection])
@@ -274,11 +274,6 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
     }
   }, [mode, gl, handleClick, handleMouseMove])
 
-  // Update preview values each frame for smooth rendering
-  useFrame(() => {
-    // This ensures the preview geometry updates smoothly
-  })
-
   // Calculate cylinder geometry for preview
   const cylinderGeometry = useMemo(() => {
     if (!cylinderCenter || !cylinderAxis) return null
@@ -288,17 +283,17 @@ export function CylinderFitHandler({ onCandidatesReady }: CylinderFitHandlerProp
 
     // Use preview values during adjustment phases
     if (cylinderPhase === 'radius') {
-      radius = previewRadiusRef.current || 0.1
+      radius = previewRadius || 0.1
       height = 0.1 // Minimal height during radius adjustment
     } else if (cylinderPhase === 'height') {
-      radius = cylinderRadius || previewRadiusRef.current || 0.1
-      height = previewHeightRef.current || 0.1
+      radius = cylinderRadius || previewRadius || 0.1
+      height = previewHeight || 0.1
     }
 
     if (radius < 0.01 || height < 0.01) return null
 
     return { radius, height }
-  }, [cylinderCenter, cylinderAxis, cylinderRadius, cylinderHeight, cylinderPhase])
+  }, [cylinderCenter, cylinderAxis, cylinderRadius, cylinderHeight, cylinderPhase, previewRadius, previewHeight])
 
   // Calculate rotation to align cylinder with axis
   const cylinderRotation = useMemo(() => {

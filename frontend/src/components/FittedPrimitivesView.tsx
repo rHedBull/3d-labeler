@@ -109,27 +109,29 @@ export function FittedPrimitivesView() {
               />
             </mesh>
 
-            {/* Top and bottom caps for better visibility */}
-            <mesh rotation={rotation} position={[0, cylinder.height / 2, 0]}>
-              <circleGeometry args={[cylinder.radius, 32]} />
-              <meshBasicMaterial
-                color={color}
-                transparent
-                opacity={fillOpacity}
-                side={THREE.DoubleSide}
-                depthWrite={false}
-              />
-            </mesh>
-            <mesh rotation={rotation} position={[0, -cylinder.height / 2, 0]}>
-              <circleGeometry args={[cylinder.radius, 32]} />
-              <meshBasicMaterial
-                color={color}
-                transparent
-                opacity={fillOpacity}
-                side={THREE.DoubleSide}
-                depthWrite={false}
-              />
-            </mesh>
+            {/* Top and bottom caps - nested in rotated group for correct positioning */}
+            <group rotation={rotation}>
+              <mesh position={[0, cylinder.height / 2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[cylinder.radius, 32]} />
+                <meshBasicMaterial
+                  color={color}
+                  transparent
+                  opacity={fillOpacity}
+                  side={THREE.DoubleSide}
+                  depthWrite={false}
+                />
+              </mesh>
+              <mesh position={[0, -cylinder.height / 2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[cylinder.radius, 32]} />
+                <meshBasicMaterial
+                  color={color}
+                  transparent
+                  opacity={fillOpacity}
+                  side={THREE.DoubleSide}
+                  depthWrite={false}
+                />
+              </mesh>
+            </group>
           </group>
         )
       })}

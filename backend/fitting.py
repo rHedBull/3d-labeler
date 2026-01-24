@@ -71,7 +71,7 @@ def fit_cylinder_ransac(
             continue
 
         # Count inliers: points whose distance to cylinder surface is within threshold
-        inlier_mask, distances = _cylinder_inliers(
+        inlier_mask, _ = _cylinder_inliers(
             points, p1, axis, radius, inlier_threshold
         )
         inlier_count = np.sum(inlier_mask)
