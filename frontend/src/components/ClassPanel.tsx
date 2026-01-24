@@ -41,7 +41,8 @@ export function ClassPanel() {
     try {
       const indices = new Int32Array(Array.from(selectedIndices))
       const result = await extractPoints(indices, sceneName, filename)
-      alert(`Extracted ${result.num_points.toLocaleString()} points to ${result.path}`)
+      const meshInfo = result.mesh_path ? `\nMesh: ${result.mesh_path}` : ''
+      alert(`Extracted ${result.num_points.toLocaleString()} points to ${result.path}${meshInfo}`)
     } catch (e) {
       alert(`Extract failed: ${e}`)
     } finally {
